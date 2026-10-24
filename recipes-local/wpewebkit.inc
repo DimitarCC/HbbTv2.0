@@ -158,6 +158,7 @@ ARM_INSTRUCTION_SET:armv7ve = "thumb"
 
 # Extra runtime depends
 # nooelint: oelint.vars.dependsordered - ignored for convenience
+# Don't add "libgles2" here as it is box dependent
 RDEPENDS:${PN} += "\
     ${@bb.utils.contains('PACKAGECONFIG', 'remote-inspector', '${PN}-web-inspector-plugin', '', d)} \
     ${@bb.utils.contains('PACKAGECONFIG', 'gst_gl', 'gstreamer1.0-plugins-base-opengl', '', d)} \
@@ -178,7 +179,11 @@ RDEPENDS:${PN} += "\
                                                     gstreamer1.0-plugins-good-deinterlace \
                                                     gstreamer1.0-plugins-good-interleave \
                                                     ', '', d)} \
-    libgles2 \
+    brotli \
+    libepoxy \
+    libsoup \
+    nghttp2 \
+    woff2 \
 "
 
 RDEPENDS:${PN}-web-inspector-plugin += "\
