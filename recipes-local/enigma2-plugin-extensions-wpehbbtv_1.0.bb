@@ -107,7 +107,7 @@ S = "${UNPACKDIR}"
 # diagnostic addition again, no behaviour change: min/max now also record the actual uploaded width/height (not just total px, and fixed a
 # reporting bug where the full-width branch was under-reporting px using the narrow dirty-rect width instead of out.ow) - the next capture shows
 # the real shape directly instead of guessing again before deciding whether/how to special-case narrow-tall regions.
-PR = "r25"
+PR = "r26"
 
 # wpewebkit: the browser engine and its headers; orb: the engine, orb_host.h and the libraries wpe_fb is linked against
 DEPENDS = "wpewebkit orb glib-2.0 libsoup"
@@ -153,6 +153,29 @@ FILES:${PN} = "${bindir}/wpe_fb ${PLUGINDIR}"
 
 pkg_postinst:${PN}() {
 #!/bin/sh
+# EGL/GLES libraries: some images ship only a differently named symlink (or just the vendor driver). Make the names wpe_fb and WebKit load
+# (libEGL.so.1, libEGL.so, libGLESv2.so.2, libGLESv2.so) exist, as links to the real file behind whichever of them is already there.
+LIBDIR="$D${libdir}"
+link_missing() {
+  # $@: all names of one library; find the real file behind the first existing one, link the missing others to it
+  real=""
+  for n in "$@"; do
+    if [ -e "$LIBDIR/$n" ]; then
+      real=$(readlink -f "$LIBDIR/$n")
+      break
+    fi
+  done
+  [ -n "$real" ] && [ -f "$real" ] || return 0
+  for n in "$@"; do
+    if [ ! -e "$LIBDIR/$n" ]; then
+      ln -sf "$(basename "$real")" "$LIBDIR/$n"
+    fi
+  done
+}
+
+link_missing libEGL.so.1 libEGL.so libv3ddriver.so
+link_missing libGLESv2.so.2 libGLESv2.so libv3ddriver.so
+
 echo "***********************************"
 echo "*          WPE HbbTV 2.0          *"
 echo "*   WPE WebKit + Open Red Button  *"
