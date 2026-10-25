@@ -1,0 +1,34 @@
+"update-hbbtv-recipes":
+=======================
+
+Use after update to "github.com/OpenViX/HbbTv2.0".
+It pulls changes from "https://github.com/OpenViX/HbbTv2.0/tree/master/recipes-local/*" into "~/$BUILD_VERSION/meta-local/recipes-local"
+
+========================================================================================================================================
+
+
+"ipk_compare.py":
+=================
+
+Let's us take snapshots of the ipk folder.
+e.g.
+
+Take a "before" snapshot: "python3 ipk_compare.py snapshot before.json"
+
+Now do some build process...
+
+Take an "after" snapshot: "python3 ipk_compare.py snapshot after.json"
+
+Now check what new packages have been created:
+python3 ipk_compare.py compare before.json after.json
+
+========================================================================================================================================
+
+
+"collect_hbbtv_feed.py"
+=======================
+
+Grabs the created ipks and moves them to "~/www/feed-static-6.0" sub folders based on arch.
+Afterwards recreates "Packages" and "Packages.gz" using "recreate_feed.py" (not supplied here).
+
+"./collect_hbbtv_feed.py" to see args list.
