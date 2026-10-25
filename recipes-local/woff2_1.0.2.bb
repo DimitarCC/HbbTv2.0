@@ -9,6 +9,7 @@ LIC_FILES_CHKSUM = "file://LICENSE;md5=027c71da9e4664fdf192e6ec615f4d18"
 UPSTREAM_CHECK_URI = "https://github.com/google/woff2/releases"
 
 DEPENDS = "brotli"
+RDEPENDS:${PN} = "brotli"
 
 SRC_URI = "git://github.com/google/woff2.git;branch=master;protocol=https;destsuffix=${BP} \
            file://0001-Fix-compilation-errors-by-including-cstdint.patch"

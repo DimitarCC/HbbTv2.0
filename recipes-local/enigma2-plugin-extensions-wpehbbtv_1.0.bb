@@ -107,14 +107,15 @@ S = "${UNPACKDIR}"
 # diagnostic addition again, no behaviour change: min/max now also record the actual uploaded width/height (not just total px, and fixed a
 # reporting bug where the full-width branch was under-reporting px using the narrow dirty-rect width instead of out.ow) - the next capture shows
 # the real shape directly instead of guessing again before deciding whether/how to special-case narrow-tall regions.
-PR = "r24"
+PR = "r25"
 
 # wpewebkit: the browser engine and its headers; orb: the engine, orb_host.h and the libraries wpe_fb is linked against
 DEPENDS = "wpewebkit orb glib-2.0 libsoup"
 # wpe_fb loads the web process extension and the platform library of ORB by path (dlopen), which the shared library dependencies do not show.
 # No "enigma2" here: it is always there on a box, and bitbake would build everything a package runtime-depends on (a whole enigma2 build).
-# orb r4 or later: orb_host_key_set_mask (r3: orb_host_service_selected / orb_host_ait_section) (r2: orb_host_set_components / orb_host_set_component_handler)
-RDEPENDS:${PN} = "orb (>= 1.0+git385+8945a130+8945a1301c-r4)"
+# orb r4 or later: orb_host_key_set_mask (r3: orb_host_service_selected / orb_host_ait_section) (r2: orb_host_set_components / orb_host_set_component_handler).
+# In orb_git.bb SRCREV is locked at "8945a1301ca036f8fbc973876476bb1af14c591d"
+RDEPENDS:${PN} = "orb (>= 1.0+git385+8945a130+8945a1301c-r4) wpewebkit"
 
 inherit pkgconfig
 

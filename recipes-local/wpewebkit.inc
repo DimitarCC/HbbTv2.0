@@ -179,10 +179,8 @@ RDEPENDS:${PN} += "\
                                                     gstreamer1.0-plugins-good-deinterlace \
                                                     gstreamer1.0-plugins-good-interleave \
                                                     ', '', d)} \
-    brotli \
     libepoxy \
     libsoup \
-    nghttp2 \
     woff2 \
 "
 
