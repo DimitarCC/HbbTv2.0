@@ -153,28 +153,34 @@ FILES:${PN} = "${bindir}/wpe_fb ${PLUGINDIR}"
 
 pkg_postinst:${PN}() {
 #!/bin/sh
-# EGL/GLES libraries: some images ship only a differently named symlink (or just the vendor driver). Make the names wpe_fb and WebKit load
-# (libEGL.so.1, libEGL.so, libGLESv2.so.2, libGLESv2.so) exist, as links to the real file behind whichever of them is already there.
-LIBDIR="$D${libdir}"
-link_missing() {
-  # $@: all names of one library; find the real file behind the first existing one, link the missing others to it
-  real=""
-  for n in "$@"; do
-    if [ -e "$LIBDIR/$n" ]; then
-      real=$(readlink -f "$LIBDIR/$n")
-      break
-    fi
-  done
-  [ -n "$real" ] && [ -f "$real" ] || return 0
-  for n in "$@"; do
-    if [ ! -e "$LIBDIR/$n" ]; then
-      ln -sf "$(basename "$real")" "$LIBDIR/$n"
-    fi
-  done
-}
 
-link_missing libEGL.so.1 libEGL.so libv3ddriver.so
-link_missing libGLESv2.so.2 libGLESv2.so libv3ddriver.so
+# Create missing EGL/GLES library symlinks.
+LIBDIR="${libdir}"
+
+for group in \
+    "libEGL.so.1 libEGL.so libv3ddriver.so" \
+    "libGLESv2.so.2 libGLESv2.so libv3ddriver.so"
+do
+    set -- $group
+    real=""
+
+    # Find an existing library and resolve its real path.
+    for n in "$@"; do
+        if [ -e "$LIBDIR/$n" ]; then
+            real=$(readlink -f "$LIBDIR/$n")
+            break
+        fi
+    done
+
+    # Create any missing names as symlinks to that file.
+    if [ -n "$real" ] && [ -f "$real" ]; then
+        for n in "$@"; do
+            if [ ! -e "$LIBDIR/$n" ]; then
+                ln -sf "$real" "$LIBDIR/$n"
+            fi
+        done
+    fi
+done
 
 echo "***********************************"
 echo "*          WPE HbbTV 2.0          *"
