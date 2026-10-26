@@ -25,7 +25,7 @@ ORB=${WPE_ORB_DIR:-/usr/lib/orb}
 #   WPE_DEBUG       1: debug.js (the page's console and media events in /tmp/wpe_fb.log) and GStreamer debug output; default 0
 #   WPE_LIMIT_REPEAT 1: pass the remote's auto-repeat on at most once per delivered frame, so a held key moves fewer steps; a matter
 #                   of feel, it does not make the page settle sooner (docs/phase1-results.txt); default 1
-CONF=/etc/enigma2/wpehbbtv.conf
+CONF=/etc/enigma2/wpehbbtv.conf 
 if [ -f "$CONF" ]; then
 	while IFS='=' read -r k v; do
 		case $k in
