@@ -186,4 +186,4 @@ PARALLEL_MAKE = "-j 6 -k 0"
 # freshly reflashed DM900 (preload finds the DM900's own libEGL.so harmlessly; libnxpl.so still fails cleanly since it
 # doesn't exist there; page loads normally, no regression). GigaBlue confirmation still pending - this is the critical
 # remaining validation step for the whole 0017 saga.
-PKGR = "r11"
+PKGR = "r12"

@@ -107,7 +107,7 @@ S = "${UNPACKDIR}"
 # diagnostic addition again, no behaviour change: min/max now also record the actual uploaded width/height (not just total px, and fixed a
 # reporting bug where the full-width branch was under-reporting px using the narrow dirty-rect width instead of out.ow) - the next capture shows
 # the real shape directly instead of guessing again before deciding whether/how to special-case narrow-tall regions.
-PR = "r26"
+PR = "r27"
 
 # wpewebkit: the browser engine and its headers; orb: the engine, orb_host.h and the libraries wpe_fb is linked against
 DEPENDS = "wpewebkit orb glib-2.0 libsoup"
