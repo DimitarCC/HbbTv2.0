@@ -937,10 +937,7 @@ class ChannelAppLauncher:
 			self.fallback()
 			return
 		self.ait = AitCollection(*started)
-		try:
-			self.box = self.session.open(MessageBox, "Reading the HbbTV application information ...", MessageBox.TYPE_INFO, enable_input=False)
-		except Exception:
-			self.box = None
+		self.box = None  # no "Reading the HbbTV application information" message box: the AIT is read silently
 		self.timer.start(200, False)
 
 	def closeBox(self):
@@ -1182,7 +1179,7 @@ SETTINGS = [
 	("WPE_HIDPI", "Render quality", [("1.5", "sharp (1.5x)"), ("1.25", "balanced (1.25x)"), ("1.0", "fast (1.0x)")], "1.0"),
 	("WPE_FAST_ANIM", "Shorter animations", [("0", "off"), ("1", "on")], "1"),
 	("WPE_PERSIST", "Keep cache, cookies and storage", [("1", "yes"), ("0", "no")], "1"),
-	("WPE_DEBUG", "Debug log (slower)", [("0", "off"), ("1", "on")], "1"),
+	("WPE_DEBUG", "Debug log (slower)", [("0", "off"), ("1", "on")], "0"),
 	("WPE_LIMIT_REPEAT", "Limit key repeat (a feel, not a speed-up)", [("0", "off"), ("1", "on")], "1"),
 ]
 

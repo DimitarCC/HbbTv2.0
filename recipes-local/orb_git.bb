@@ -23,6 +23,7 @@ SRC_URI = "git://github.com/OpenRedButtonProject/orb.git;protocol=https;branch=m
     file://orb_ext.c \
     file://mock_fix.cpp \
     file://debug.js \
+    file://hbbtv.js \
 "
 SRCREV = "8945a1301ca036f8fbc973876476bb1af14c591d"
 
@@ -30,7 +31,8 @@ SRCREV = "8945a1301ca036f8fbc973876476bb1af14c591d"
 # come from enigma2 (orb_host_set_components), component selection goes back to it (orb_host.h changed: the plugin needs this revision)
 # r3: the real AIT (orb_host_service_selected / orb_host_ait_section / orb_host_broadcast_stopped, dvb://current.ait locators in orb_host_launch_broadcast)
 # r4: orb_host_key_set_mask (the key set of the running application, for the automatic banner)
-PR = "r4"
+# r5: our own hbbtv.js (WPE tweaks, e.g. no fades) replaces the one the ORB makefile generates
+PR = "r5"
 PV = "1.0+git"
 PKGV = "1.0+git${GITPKGV}"
 
@@ -55,6 +57,8 @@ do_install:append() {
     for f in hbbtv.js iframe.js dash.all.min.js playerpage.html; do
         install -m 0644 ${S}/out/resources/assets/polyfill/$f ${D}${libdir}/orb/$f
     done
+    # our modified polyfill replaces the generated hbbtv.js
+    install -m 0644 ${UNPACKDIR}/hbbtv.js ${D}${libdir}/orb/hbbtv.js
     # forwards the application's console output, script errors and media events to the embedder's log; wpe_fb injects it when present
     install -m 0644 ${UNPACKDIR}/debug.js ${D}${libdir}/orb/debug.js
 }

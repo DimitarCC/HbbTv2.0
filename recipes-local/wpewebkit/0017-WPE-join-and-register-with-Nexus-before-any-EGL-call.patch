@@ -65,7 +65,7 @@ new file mode 100644
 index 00000000..e11cc9da
 --- /dev/null
 +++ b/Source/WebCore/platform/graphics/NexusEGLPlatformQuirk.h
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,150 @@
 +/*
 + * Copyright (C) 2026 xcentaurix
 + *
@@ -95,6 +95,7 @@ index 00000000..e11cc9da
 +
 +#if PLATFORM(WPE)
 +
++#include <cstdlib>
 +#include <cstring>
 +#include <dlfcn.h>
 +#include <wtf/Assertions.h>
@@ -131,6 +132,10 @@ index 00000000..e11cc9da
 +    if (attempted)
 +        return;
 +    attempted = true;
++
++    // WPE_NO_NEXUS_JOIN=1: do not join/register (wpe_fb --egl-sink experiment; any EGL call in this process then aborts on a Nexus box)
++    if (const char* skip = getenv("WPE_NO_NEXUS_JOIN"); skip && *skip == '1')
++        return;
 +
 +    // 2026-09-23 GigaBlue history: r8 (v2) got NxClient_Join() running and succeeding (logged "returned 0") but the
 +    // expected "NXPL_RegisterNexusDisplayPlatform() -> handle=..." line never appeared, with no diagnostics at the time to

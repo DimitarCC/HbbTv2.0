@@ -115,7 +115,7 @@ DEPENDS = "wpewebkit orb glib-2.0 libsoup"
 # No "enigma2" here: it is always there on a box, and bitbake would build everything a package runtime-depends on (a whole enigma2 build).
 # orb r4 or later: orb_host_key_set_mask (r3: orb_host_service_selected / orb_host_ait_section) (r2: orb_host_set_components / orb_host_set_component_handler).
 # In orb_git.bb SRCREV is locked at "8945a1301ca036f8fbc973876476bb1af14c591d"
-RDEPENDS:${PN} = "orb (>= 1.0+git385+8945a130+8945a1301c-r4) wpewebkit"
+RDEPENDS:${PN} = "orb (>= 1.0+git385+8945a130+8945a1301c-r5) wpewebkit"
 
 inherit pkgconfig
 
