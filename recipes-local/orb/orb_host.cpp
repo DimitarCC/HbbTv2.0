@@ -72,7 +72,9 @@ const char *KeyCodeLabel(int keyCode)
 struct HostListener : orb::ORBEventListener {
     void OnJavaScriptEventDispatchRequested(std::string name, std::string properties, std::string targetOrigin, bool broadcastRelated) override
     {
-        EvalJs("document.dispatchBridgeEvent('" + name + "', " + (properties.empty() ? "{}" : properties) + ")");
+        /* The polyfill defines document.dispatchBridgeEvent when it runs in the new page. Events that are sent before that (the channel status
+         * while the page is still loading) went into a page that has no handler yet: skip them quietly instead of a TypeError in the log. */
+        EvalJs("if (document.dispatchBridgeEvent) document.dispatchBridgeEvent('" + name + "', " + (properties.empty() ? "{}" : properties) + ")");
     }
     void OnDvbUrlLoaded(int requestId, std::vector<uint8_t> content, unsigned int contentLength) override
     {

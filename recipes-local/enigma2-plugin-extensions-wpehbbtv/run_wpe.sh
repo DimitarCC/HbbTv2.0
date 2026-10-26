@@ -22,18 +22,20 @@ ORB=${WPE_ORB_DIR:-/usr/lib/orb}
 #   WPE_FAST_ANIM   1: CSS transitions/animations last 1 ms, no smooth scrolling (fewer frames per key press); default 1
 #   WPE_PERSIST     1: HTTP cache (<= 75 MB), cookies and local storage survive between runs (default 1, needs /media/hdd)
 #   WPE_PERSIST_DIR where they live (default /media/hdd/.wpe-data)
-#   WPE_DEBUG       1: debug.js (the page's console and media events in /tmp/wpe_fb.log) and GStreamer debug output; default 1
+#   WPE_DEBUG       1: debug.js (the page's console and media events in /tmp/wpe_fb.log) and GStreamer debug output; default 0
 #   WPE_LIMIT_REPEAT 1: pass the remote's auto-repeat on at most once per delivered frame, so a held key moves fewer steps; a matter
 #                   of feel, it does not make the page settle sooner (docs/phase1-results.txt); default 1
 CONF=/etc/enigma2/wpehbbtv.conf
 if [ -f "$CONF" ]; then
 	while IFS='=' read -r k v; do
 		case $k in
-		WPE_HIDPI | WPE_FAST_ANIM | WPE_PERSIST | WPE_PERSIST_DIR | WPE_DEBUG | WPE_LIMIT_REPEAT | WPE_EGL | WPE_EGL_SETTLE_MS | WPE_EGL_MAX_DELAY_MS | WPE_EGL_KEY_MS | WPE_EGL_HOLD_MS | WPE_EGL_HOLD_CLEAR) eval "[ -n \"\${$k}\" ] || $k=\$v" ;;
+		WPE_HIDPI | WPE_FAST_ANIM | WPE_PERSIST | WPE_PERSIST_DIR | WPE_DEBUG | WPE_LIMIT_REPEAT | WPE_EGL | WPE_EGL_SETTLE_MS | WPE_EGL_MAX_DELAY_MS | WPE_EGL_KEY_MS | WPE_EGL_HOLD_MS | WPE_EGL_HOLD_CLEAR | WPE_NO_NEXUS_JOIN | WPE_EGL_RESYNC_MS | WPE_EGL_NO_HOLE | WPE_EGL_DEBUG_RECTS | WPE_NICE | WPE_TOLERANT | WPE_EGL_PIG_SETTLE_MS | WPE_EGL_DIP_MS | WPE_HW_ACCEL | WPE_EGL_NO_TRIM) eval "[ -n \"\${$k}\" ] || $k=\$v" ;;
 		esac
 	done <"$CONF"
 fi
-export WPE_EGL_SETTLE_MS WPE_EGL_MAX_DELAY_MS WPE_EGL_KEY_MS WPE_EGL_HOLD_MS WPE_EGL_HOLD_CLEAR # read by wpe_fb --egl-sink (empty = its defaults)
+export WPE_HW_ACCEL WPE_EGL_NO_TRIM WPE_EGL_DIP_MS WPE_EGL_PIG_SETTLE_MS WPE_EGL_DEBUG_RECTS WPE_EGL_NO_HOLE WPE_NO_NEXUS_JOIN WPE_EGL_RESYNC_MS WPE_EGL_SETTLE_MS WPE_EGL_MAX_DELAY_MS WPE_EGL_KEY_MS WPE_EGL_HOLD_MS WPE_EGL_HOLD_CLEAR # read by wpe_fb --egl-sink (empty = its defaults)
+# defaults for what the conf file (or the environment) leaves unset
+: "${WPE_EGL_SETTLE_MS:=400}" "${WPE_EGL_MAX_DELAY_MS:=0}" "${WPE_EGL_HOLD_MS:=0}" "${WPE_EGL_HOLD_CLEAR:=1}" "${WPE_EGL_KEY_MS:=150}" "${WPE_EGL_NO_HOLE:=1}" "${WPE_NICE:=-20}"
 case "$WPE_HIDPI" in 1 | 1.0 | 1.25 | 1.5) ;; *) WPE_HIDPI=1.0 ;; esac
 WPE_PERSIST_DIR=${WPE_PERSIST_DIR:-/media/hdd/.wpe-data}
 case "$WPE_PERSIST_DIR" in /*[!A-Za-z0-9_./-]* | [!/]*) WPE_PERSIST_DIR=/media/hdd/.wpe-data ;; esac # an absolute plain path, else the default
@@ -44,7 +46,9 @@ OUTMODE="--fb --fullscreen"
 [ -z "$WPE_EGL" ] && [ -S /tmp/e2_webov.sock ] && WPE_EGL=1
 [ "$WPE_EGL" = 1 ] && [ "$WPE_OVERLAY" != 1 ] && OUTMODE="--egl-sink"
 [ "${WPE_FAST_ANIM:-1}" = 1 ] && OPTS="$OPTS --fast-anim"
-[ "${WPE_DEBUG:-1}" = 1 ] || OPTS="$OPTS --no-debug-js"
+# WPE_TOLERANT (default 0): ignore TLS certificate errors, no WebKit error page on a failed load, reload a crashed page instead of quitting
+[ "${WPE_TOLERANT:-0}" = 1 ] && OPTS="$OPTS --tolerant"
+[ "${WPE_DEBUG:-0}" = 1 ] || OPTS="$OPTS --no-debug-js"
 [ "${WPE_LIMIT_REPEAT:-1}" = 1 ] && OPTS="$OPTS --limit-repeat"
 [ "$WPE_OVERLAY" = 1 ] && OPTS="$OPTS --overlay-png /tmp/wpe_overlay" # set by the plugin for the automatic banner: no framebuffer, the visible part of each frame as a PNG that the plugin shows in a screen of enigma2
 if [ "${WPE_PERSIST:-1}" = 1 ] && [ -d "$(dirname "$WPE_PERSIST_DIR")" ] && [ -w "$(dirname "$WPE_PERSIST_DIR")" ]; then
@@ -70,7 +74,7 @@ export WEBKIT_SKIA_CPU_PAINTING_THREADS=2
 
 # media pipeline diagnostics into the log (/tmp/wpe_fb.log): player, quirks and the dvb sinks; the page's own console/media events
 # come from debug.js (in the ORB directory) as "[page] ..." lines
-if [ "${WPE_DEBUG:-1}" = 1 ]; then
+if [ "${WPE_DEBUG:-0}" = 1 ]; then
 	export GST_DEBUG="${GST_DEBUG:-2,webkitmediaplayer:4,webkitquirks:4,dvbvideosink:4,dvbaudiosink:4,webkitwebsrc:5}"
 else
 	export GST_DEBUG="${GST_DEBUG:-2}"
@@ -149,7 +153,12 @@ if [ -n "$APP" ]; then
 	# WPE_OWNER=<pid> (set by the plugin): enigma2's process. When it is gone (a restart of the GUI, a crash) nobody would ever send "quit": wpe_fb and its
 	# web processes stayed behind (300 MB of RAM, the decoder, the FIFOs). A watchdog asks it to end then (SIGTERM = a clean quit), and makes sure.
 	case "$WPE_OWNER" in '' | *[!0-9]*) WPE_OWNER="" ;; esac
-	$WPE_FB $HW --orb "$ORB" $OUTMODE $OPTS --ctl $CTL --secs 0 &
+	# Web processes left behind by an earlier run that did not end cleanly (wpe_fb crashed or was killed) keep painting and hold GPU memory and CPU:
+	# every later page is then painted slowly (half-painted tiles, black rectangles) until enigma2 is restarted and its process group is cleaned up.
+	killall -9 WPEWebProcess WPENetworkProcess WPEGPUProcess >/dev/null 2>&1
+	# WPE_NICE=-5 (conf): scheduling priority of wpe_fb and, inherited, its web processes (-20 highest .. 19 lowest; default: unchanged)
+	case "$WPE_NICE" in -[0-9] | -1[0-9] | -20 | [0-9] | 1[0-9]) NICE="nice -n $WPE_NICE" ;; *) NICE="" ;; esac
+	$NICE $WPE_FB $HW --orb "$ORB" $OUTMODE $OPTS --ctl $CTL --secs 0 &
 	WPID=$!
 	if [ -n "$WPE_OWNER" ]; then
 		( while kill -0 "$WPID" 2>/dev/null; do
@@ -163,7 +172,11 @@ if [ -n "$APP" ]; then
 		done ) &
 	fi
 	wait "$WPID"
-	exit $?
+	RC=$?
+	# how it ended: 139 = SIGSEGV, 134 = abort, 137 = SIGKILL (the watchdog above, the OOM killer), 143 = SIGTERM, 0 = a clean quit
+	echo "run_wpe: wpe_fb pid $WPID ended with status $RC at $(date +%T)" >> /tmp/wpe_fb.log
+	killall -9 WPEWebProcess WPENetworkProcess WPEGPUProcess >/dev/null 2>&1 # the same after this run, whatever way wpe_fb ended
+	exit $RC
 else
 	exec $WPE_FB $HW $OUTMODE $OPTS --ctl $CTL --secs 0 "$1"
 fi

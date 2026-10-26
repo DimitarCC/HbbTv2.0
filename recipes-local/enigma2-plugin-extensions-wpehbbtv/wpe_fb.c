@@ -86,6 +86,7 @@
 static gboolean trace;
 static gboolean autoplay_deny; /* --autoplay deny */
 static gboolean fast_anim; /* --fast-anim */
+static gboolean tolerant; /* --tolerant: see on_load_failed_tolerant() / on_web_process_terminated() */
 static gboolean show_scrollbars; /* --scrollbars */
 static const char *persist_dir; /* --persist DIR: HTTP cache, cookies, local storage survive between runs */
 static gboolean no_debug_js; /* --no-debug-js */
@@ -462,7 +463,12 @@ static struct sockaddr_un egl_peer;
 static int egl_sock = -1;
 static int egl_screen_w = 1920, egl_screen_h = 1080;
 static gboolean egl_notify_pending;
-static int egl_hold_ms = 400; /* WPE_EGL_HOLD_MS, see held_take() */
+static int egl_resync_ms = 0; /* WPE_EGL_RESYNC_MS, see resync_note(); off by default: it re-reads a released buffer, which can hold older pixels than the frame (a flash back after an animation) */
+static int egl_dip_ms = 150; /* WPE_EGL_DIP_MS, see dip_copy() */
+static void dip_alloc(void);
+static void dip_free(void);
+static gboolean egl_no_trim; /* WPE_EGL_NO_TRIM=1, see out_blit_rect() */
+static int egl_hold_ms = 0; /* WPE_EGL_HOLD_MS, see held_take(); off by default: it delays solid areas, which shows as a late flash after an animation */
 static gboolean egl_hold_clear; /* WPE_EGL_HOLD_CLEAR */
 static int egl_settle_ms = 60, egl_max_delay_ms = 250; /* see egl_mark_dirty() */
 
@@ -495,14 +501,20 @@ static gboolean egl_open(void)
     egl_shm = p;
     if (g_getenv("WPE_EGL_SETTLE_MS"))
         egl_settle_ms = atoi(g_getenv("WPE_EGL_SETTLE_MS"));
+    if (g_getenv("WPE_EGL_DIP_MS"))
+        egl_dip_ms = atoi(g_getenv("WPE_EGL_DIP_MS"));
+    egl_no_trim = g_getenv("WPE_EGL_NO_TRIM") && atoi(g_getenv("WPE_EGL_NO_TRIM")) == 1;
     if (g_getenv("WPE_EGL_HOLD_MS"))
         egl_hold_ms = atoi(g_getenv("WPE_EGL_HOLD_MS"));
     egl_hold_clear = g_getenv("WPE_EGL_HOLD_CLEAR") && atoi(g_getenv("WPE_EGL_HOLD_CLEAR")) == 1;
+    if (g_getenv("WPE_EGL_RESYNC_MS"))
+        egl_resync_ms = atoi(g_getenv("WPE_EGL_RESYNC_MS"));
     if (g_getenv("WPE_EGL_KEY_MS"))
         egl_key_fast_ms = atoi(g_getenv("WPE_EGL_KEY_MS"));
     if (g_getenv("WPE_EGL_MAX_DELAY_MS"))
         egl_max_delay_ms = MAX(1, atoi(g_getenv("WPE_EGL_MAX_DELAY_MS")));
     memset(egl_shm, 0, WOV_HEADER);
+    dip_alloc();
     egl_shm->version = WOV_VERSION;
     egl_shm->width = out.w;
     egl_shm->height = out.h;
@@ -639,7 +651,7 @@ static void egl_set_hole(int x, int y, int w, int h)
 /* Unpainted tiles. WebKit paints tiles asynchronously and has no "frame complete" signal: while a slow page is still painting, the buffers it
  * delivers contain damage rects that are one solid colour - opaque black (0xFF000000) or fully transparent (0) - because the tile has not been
  * painted yet. Such a rect is not copied into the shared frame (enigma2 keeps showing what was there); a copy of it is held for
- * WPE_EGL_HOLD_MS (default 400) and any later damage rect that touches it replaces it, since that is the real paint. Only if nothing
+ * WPE_EGL_HOLD_MS (default 0 = off, try 400) and any later damage rect that touches it replaces it, since that is the real paint. Only if nothing
  * repaints the area in that time is the solid rect real content, and it is published after all. WPE_EGL_HOLD_MS=0 turns this off.
  * Small rects are never held (a button highlight, a caret). Transparent rects are held only with WPE_EGL_HOLD_CLEAR=1 (a page that clears
  * an area to show the picture behind it would otherwise lose that for the hold time). */
@@ -712,14 +724,28 @@ static gboolean held_take(const guint8 *src, int stride, int rx, int ry, int rw,
     if (egl_hold_ms <= 0 || (gint64)rw * rh < HOLD_MIN_PIXELS || nheld >= HOLD_MAX)
         return FALSE;
     const guint32 first = *(const guint32 *)(src + (size_t)ry * stride + (size_t)rx * 4);
-    if (first != 0xFF000000u && !(first == 0 && egl_hold_clear))
-        return FALSE;
-    for (int row = 0; row < rh; row++) {
+    /* diagnostics (WPE_EGL_DEBUG_RECTS=1): what do the big damage rects look like - solid black, solid transparent, solid other, or mixed? */
+    static int dbg = -1, dbg_left = 300;
+    if (dbg < 0)
+        dbg = g_getenv("WPE_EGL_DEBUG_RECTS") && atoi(g_getenv("WPE_EGL_DEBUG_RECTS")) == 1;
+    gboolean solid = TRUE;
+    guint32 other = first;
+    for (int row = 0; row < rh && solid; row++) {
         const guint32 *p = (const guint32 *)(src + (size_t)(ry + row) * stride + (size_t)rx * 4);
         for (int c = 0; c < rw; c++)
-            if (p[c] != first)
-                return FALSE;
+            if (p[c] != first) {
+                solid = FALSE;
+                other = p[c];
+                break;
+            }
     }
+    if (dbg && dbg_left > 0 && (gint64)rw * rh >= HOLD_MIN_PIXELS && (solid || first == 0xFF000000u || first == 0)) {
+        dbg_left--;
+        fprintf(stderr, "egl: rect %d,%d %dx%d %s first=%08x%s\n", rx, ry, rw, rh, solid ? "SOLID" : "mixed", first, "");
+        (void)other;
+    }
+    if (!solid || (first != 0xFF000000u && !(first == 0 && egl_hold_clear)))
+        return FALSE;
     HeldRect *r = &held[nheld++];
     r->x = rx; r->y = ry; r->w = rw; r->h = rh;
     r->px = g_malloc((size_t)rw * rh * 4);
@@ -730,10 +756,223 @@ static gboolean held_take(const guint8 *src, int stride, int rx, int ry, int rw,
     return TRUE;
 }
 
+/* Resync. The shared frame is built from damage rects only, so anything WebKit paints without reporting it as damage (or reports before the
+ * pixels are final) stays wrong in it for ever: a stuck black rectangle while the page redraws around it. When no frame has arrived for
+ * WPE_EGL_RESYNC_MS (default 0 = off, try 500) the whole of the latest buffer is compared with the shared frame and every row that differs is
+ * corrected and published. The count is logged ("egl: resync ..."): if it never fires while a black rectangle is stuck, the buffer itself
+ * is black there too and this is not the cause. */
+static GBytes *resync_bytes;
+static int resync_stride, resync_w, resync_h;
+static guint resync_timer;
+static gboolean resync_cb(gpointer data)
+{
+    (void)data;
+    resync_timer = 0;
+    if (!resync_bytes || !egl_shm || nheld)
+        return G_SOURCE_REMOVE;
+    const guint8 *src = g_bytes_get_data(resync_bytes, NULL);
+    if (resync_w != out.w || resync_h != out.h)
+        return G_SOURCE_REMOVE;
+    int rows = 0, y0 = -1, y1 = -1;
+    for (int y = 0; y < out.h; y++) {
+        guint8 *dst = out.canvas + (size_t)y * out.w * 4;
+        if (!memcmp(dst, src + (size_t)y * resync_stride, (size_t)out.w * 4))
+            continue;
+        memcpy(dst, src + (size_t)y * resync_stride, (size_t)out.w * 4);
+        if (y0 < 0)
+            y0 = y;
+        y1 = y + 1;
+        rows++;
+    }
+    if (rows) {
+        fprintf(stderr, "egl: resync corrected %d rows (%d..%d)\n", rows, y0, y1);
+        egl_mark_dirty(y0, y1);
+        egl_publish();
+    }
+    return G_SOURCE_REMOVE;
+}
+
+static void resync_note(GBytes *bytes, int stride, int w, int h)
+{
+    if (egl_resync_ms <= 0 || !egl_shm)
+        return;
+    if (resync_bytes)
+        g_bytes_unref(resync_bytes);
+    resync_bytes = g_bytes_ref(bytes);
+    resync_stride = stride;
+    resync_w = w;
+    resync_h = h;
+    if (resync_timer)
+        g_source_remove(resync_timer);
+    resync_timer = g_timeout_add((guint)egl_resync_ms, resync_cb, NULL);
+}
+
+/* Dips. When a fade or another animation ends, WebKit often delivers one frame in which the part is empty (fully transparent, or solid black)
+ * before the final paint arrives a moment later: the part blinks. The frame is cut into 64x64 blocks; a block that would turn from content into
+ * a solid transparent / solid black one is NOT written to the shared frame at once. It is written only if no later frame has painted it within
+ * WPE_EGL_DIP_MS (default 150, 0 = off) - so a real clear (the fade-out is over) shows 150 ms late, a one-frame dip never shows. */
+#define DIP_BLOCK 64
+typedef struct {
+    guint32 color;
+    gint64 due_us;
+    gboolean on;
+} DipBlock;
+static DipBlock *dip;
+static guint8 *dip_now;
+static int dip_bx, dip_by;
+static guint dip_timer;
+
+static void dip_free(void)
+{
+    if (dip_timer) {
+        g_source_remove(dip_timer);
+        dip_timer = 0;
+    }
+    g_clear_pointer(&dip, g_free);
+    g_clear_pointer(&dip_now, g_free);
+}
+
+static void dip_alloc(void)
+{
+    dip_bx = (out.w + DIP_BLOCK - 1) / DIP_BLOCK;
+    dip_by = (out.h + DIP_BLOCK - 1) / DIP_BLOCK;
+    dip = g_new0(DipBlock, (gsize)dip_bx * dip_by);
+    dip_now = g_new0(guint8, (gsize)dip_bx * dip_by);
+}
+
+static gboolean dip_flush_cb(gpointer data);
+
+static void dip_arm(void)
+{
+    if (dip_timer) {
+        g_source_remove(dip_timer);
+        dip_timer = 0;
+    }
+    gint64 first = 0;
+    for (int i = 0; i < dip_bx * dip_by; i++)
+        if (dip[i].on && (!first || dip[i].due_us < first))
+            first = dip[i].due_us;
+    if (!first)
+        return;
+    gint64 ms = (first - g_get_monotonic_time() + 999) / 1000;
+    dip_timer = g_timeout_add((guint)MAX(ms, 1), dip_flush_cb, NULL);
+}
+
+static gboolean dip_flush_cb(gpointer data)
+{
+    (void)data;
+    dip_timer = 0;
+    if (!dip || !egl_shm)
+        return G_SOURCE_REMOVE;
+    const gint64 now = g_get_monotonic_time();
+    gboolean any = FALSE;
+    for (int by = 0; by < dip_by; by++) {
+        for (int bx = 0; bx < dip_bx; bx++) {
+            DipBlock *b = &dip[by * dip_bx + bx];
+            if (!b->on || b->due_us > now)
+                continue;
+            const int x = bx * DIP_BLOCK, y = by * DIP_BLOCK, w = MIN(DIP_BLOCK, out.w - x), h = MIN(DIP_BLOCK, out.h - y);
+            for (int row = 0; row < h; row++) {
+                guint32 *d = (guint32 *)(out.canvas + ((size_t)(y + row) * out.w + x) * 4);
+                for (int i = 0; i < w; i++)
+                    d[i] = b->color;
+            }
+            egl_mark_dirty(y, y + h);
+            b->on = FALSE;
+            any = TRUE;
+        }
+    }
+    dip_arm();
+    if (any)
+        egl_publish();
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean dip_src_solid(const guint8 *src, int stride, int x, int y, int w, int h, guint32 *color)
+{
+    const guint32 first = *(const guint32 *)(src + (size_t)y * stride + (size_t)x * 4);
+    if (first != 0 && first != 0xFF000000u)
+        return FALSE;
+    for (int row = 0; row < h; row++) {
+        const guint32 *p = (const guint32 *)(src + (size_t)(y + row) * stride + (size_t)x * 4);
+        for (int i = 0; i < w; i++)
+            if (p[i] != first)
+                return FALSE;
+    }
+    *color = first;
+    return TRUE;
+}
+
+static gboolean dip_canvas_is(int x, int y, int w, int h, guint32 color)
+{
+    for (int row = 0; row < h; row++) {
+        const guint32 *p = (const guint32 *)(out.canvas + ((size_t)(y + row) * out.w + x) * 4);
+        for (int i = 0; i < w; i++)
+            if (p[i] != color)
+                return FALSE;
+    }
+    return TRUE;
+}
+
+/* copies one clipped damage rect into the shared frame, leaving out the blocks that look like a dip; TRUE when it did the copy */
+static gboolean dip_copy(const guint8 *src, int stride, int rx, int ry, int rw, int rh)
+{
+    if (egl_dip_ms <= 0 || !dip)
+        return FALSE;
+    const int bxa = rx / DIP_BLOCK, bxb = (rx + rw - 1) / DIP_BLOCK, bya = ry / DIP_BLOCK, byb = (ry + rh - 1) / DIP_BLOCK;
+    const gint64 now = g_get_monotonic_time();
+    gboolean any_held = FALSE;
+    for (int by = bya; by <= byb; by++) {
+        for (int bx = bxa; bx <= bxb; bx++) {
+            const int idx = by * dip_bx + bx;
+            const int x = bx * DIP_BLOCK, y = by * DIP_BLOCK, w = MIN(DIP_BLOCK, out.w - x), h = MIN(DIP_BLOCK, out.h - y);
+            guint32 color;
+            dip_now[idx] = 0;
+            if (x >= rx && y >= ry && x + w <= rx + rw && y + h <= ry + rh && dip_src_solid(src, stride, x, y, w, h, &color)
+                && !dip_canvas_is(x, y, w, h, color)) {
+                dip_now[idx] = 1;
+                any_held = TRUE;
+                if (!dip[idx].on || dip[idx].color != color) {
+                    dip[idx].on = TRUE;
+                    dip[idx].color = color;
+                    dip[idx].due_us = now + (gint64)egl_dip_ms * 1000;
+                }
+            } else {
+                dip[idx].on = FALSE; /* painted for real (or the part is not a dip): nothing pending any more */
+            }
+        }
+    }
+    for (int row = 0; row < rh; row++) {
+        const int y = ry + row, by = y / DIP_BLOCK;
+        int x = rx;
+        while (x < rx + rw) {
+            int bx = x / DIP_BLOCK, end = MIN(rx + rw, (bx + 1) * DIP_BLOCK);
+            if (dip_now[by * dip_bx + bx]) {
+                x = end;
+                continue;
+            }
+            /* join the following blocks that are copied too */
+            while (end < rx + rw && !dip_now[by * dip_bx + end / DIP_BLOCK])
+                end = MIN(rx + rw, (end / DIP_BLOCK + 1) * DIP_BLOCK);
+            memcpy(out.canvas + ((size_t)y * out.w + x) * 4, src + (size_t)y * stride + (size_t)x * 4, (size_t)(end - x) * 4);
+            x = end;
+        }
+    }
+    if (any_held)
+        dip_arm();
+    return TRUE;
+}
+
 static void egl_close(void)
 {
     if (!egl_shm)
         return;
+    if (resync_timer) {
+        g_source_remove(resync_timer);
+        resync_timer = 0;
+    }
+    g_clear_pointer(&resync_bytes, g_bytes_unref);
+    dip_free();
     while (nheld)
         held_drop(nheld - 1);
     if (held_timer) {
@@ -1286,13 +1525,32 @@ static void out_blit_rect(const guint8 *src, int stride, int rx, int ry, int rw,
     if (ry < 0) { rh += ry; ry = 0; }
     if (rx + rw > out.w) rw = out.w - rx;
     if (ry + rh > out.h) rh = out.h - ry;
-    if (rw <= 0 || rh <= 0)
+    if (rw <= 0 || rh <= 0 || !out.canvas) /* no canvas: the layer was withdrawn (egl_close) while WebKit still delivers frames */
         return;
 
     if (out.egl_on) {
+        /* WebKit with CPU rendering reports the whole view as damaged on every frame. Only the rows that really differ from the frame
+         * already shared are copied, marked and uploaded by enigma2 (its GPU heap is small, every full-frame texture update costs
+         * 3.6 MB of GPU work); a frame identical to the last one is dropped. WPE_EGL_NO_TRIM=1 turns this off. */
+        if (!egl_no_trim) {
+            const size_t rowlen = (size_t)rw * 4;
+            int top = 0, bottom = rh;
+            while (top < bottom && !memcmp(out.canvas + ((size_t)(ry + top) * out.w + rx) * 4, src + (size_t)(ry + top) * stride + (size_t)rx * 4, rowlen))
+                top++;
+            if (top == bottom)
+                return;
+            while (bottom > top + 1 && !memcmp(out.canvas + ((size_t)(ry + bottom - 1) * out.w + rx) * 4, src + (size_t)(ry + bottom - 1) * stride + (size_t)rx * 4, rowlen))
+                bottom--;
+            ry += top;
+            rh = bottom - top;
+        }
         held_supersede(rx, ry, rw, rh);
         if (held_take(src, stride, rx, ry, rw, rh))
             return;
+        if (dip_copy(src, stride, rx, ry, rw, rh)) {
+            egl_mark_dirty(ry, ry + rh);
+            return;
+        }
     }
     for (int row = 0; row < rh; row++)
         memcpy(out.canvas + ((size_t)(ry + row) * out.w + rx) * 4, src + (size_t)(ry + row) * stride + (size_t)rx * 4, (size_t)rw * 4);
@@ -1379,6 +1637,8 @@ static gboolean view_render_buffer(WPEView *v, WPEBuffer *buffer, const WPERecta
             pixels += (gint64)rects[i].width * rects[i].height;
         }
     }
+    if (out.egl_on)
+        resync_note(bytes, stride, w, h);
     g_bytes_unref(bytes);
     if (out.egl_on)
         egl_frame_done(); /* publish to enigma2 (now, or once the stream of frames settles), after all of this frame's damage rects were marked */
@@ -1980,6 +2240,8 @@ static void plane_write(int left, int top, int width, int height)
 
 static void apply_video_rect(int x, int y, int w, int h)
 {
+    if (g_getenv("WPE_EGL_NO_HOLE") && atoi(g_getenv("WPE_EGL_NO_HOLE")) == 1)
+        return; /* diagnostic: never cut a hole / move the video plane */
     static int last[4] = { -1, -1, -1, -1 };
     if (last[0] == x && last[1] == y && last[2] == w && last[3] == h)
         return;
@@ -2008,11 +2270,35 @@ static void apply_video_rect(int x, int y, int w, int h)
     fprintf(stderr, "video/broadcast: picture in graphics at %d,%d %dx%d\n", x, y, w, h);
 }
 
+/* An application animates its video/broadcast object (grows, shrinks, slides in): every step would cut a different hole and move the video plane,
+ * which shows as blinking. The rectangle is applied only once it has stayed the same for WPE_EGL_PIG_SETTLE_MS (default 300). */
+static int pig_pending[4];
+static guint pig_timer;
+static int pig_settle_ms = -1;
+
+static gboolean pig_apply_cb(gpointer data)
+{
+    (void)data;
+    pig_timer = 0;
+    apply_video_rect(pig_pending[0], pig_pending[1], pig_pending[2], pig_pending[3]);
+    return G_SOURCE_REMOVE;
+}
+
 static gboolean video_rect_idle(gpointer data)
 {
     int x = 0, y = 0, w = 0, h = 0;
-    if (sscanf((const char *)data, "%d,%d,%d,%d", &x, &y, &w, &h) == 4)
-        apply_video_rect(x, y, w, h);
+    if (sscanf((const char *)data, "%d,%d,%d,%d", &x, &y, &w, &h) == 4) {
+        if (pig_settle_ms < 0)
+            pig_settle_ms = g_getenv("WPE_EGL_PIG_SETTLE_MS") ? MAX(0, atoi(g_getenv("WPE_EGL_PIG_SETTLE_MS"))) : 300;
+        if (pig_settle_ms == 0) {
+            apply_video_rect(x, y, w, h);
+        } else {
+            pig_pending[0] = x; pig_pending[1] = y; pig_pending[2] = w; pig_pending[3] = h;
+            if (pig_timer)
+                g_source_remove(pig_timer);
+            pig_timer = g_timeout_add((guint)pig_settle_ms, pig_apply_cb, NULL);
+        }
+    }
     g_free(data);
     return G_SOURCE_REMOVE;
 }
@@ -2029,16 +2315,95 @@ static void on_video_rect_message(WebKitUserContentManager *ucm, JSCValue *value
     g_free(text);
 }
 
+/* Runs right after the ORB polyfill. The polyfill wraps the innerHTML/outerHTML setters and insertAdjacentHTML (objectManager's
+ * addHTMLManipulationIntercept) around the native ones, and the native ones throw SyntaxError ("The string did not match the expected pattern")
+ * when the markup is not well-formed XML - which an application's own script can hit, e.g. ZDF's start application building a teaser from data.
+ * The error stops the application. An HTML parser never rejects such markup, so on that error the markup is parsed as HTML and the nodes are
+ * put in place by hand. */
+static const char html_fix_script[] =
+    "(function(){\n"
+    "  function nodesOf(html){\n"
+    "    var d = new DOMParser().parseFromString('<!DOCTYPE html><html><body>' + html + '</body></html>', 'text/html');\n"
+    "    return Array.prototype.slice.call(d.body.childNodes).map(function(n){ return document.importNode(n, true); });\n"
+    "  }\n"
+    "  function isSyntax(e){ return e && e.name === 'SyntaxError'; }\n"
+    "  function wrapSetter(name){\n"
+    "    var d = Object.getOwnPropertyDescriptor(HTMLElement.prototype, name);\n"
+    "    if (!d || !d.set) return;\n"
+    "    Object.defineProperty(HTMLElement.prototype, name, { configurable: true, enumerable: d.enumerable, get: d.get, set: function(v){\n"
+    "      try { d.set.call(this, v); } catch (e) {\n"
+    "        if (!isSyntax(e)) throw e;\n"
+    "        var nodes = nodesOf(String(v)), i;\n"
+    "        if (name === 'innerHTML') {\n"
+    "          while (this.firstChild) this.removeChild(this.firstChild);\n"
+    "          for (i = 0; i < nodes.length; i++) this.appendChild(nodes[i]);\n"
+    "        } else if (this.parentNode) {\n"
+    "          for (i = 0; i < nodes.length; i++) this.parentNode.insertBefore(nodes[i], this);\n"
+    "          this.parentNode.removeChild(this);\n"
+    "        }\n"
+    "      }\n"
+    "    }});\n"
+    "  }\n"
+    "  wrapSetter('innerHTML');\n"
+    "  wrapSetter('outerHTML');\n"
+    "  var insert = HTMLElement.prototype.insertAdjacentHTML;\n"
+    "  if (typeof insert === 'function') {\n"
+    "    HTMLElement.prototype.insertAdjacentHTML = function(position, text){\n"
+    "      try { return insert.call(this, position, text); } catch (e) {\n"
+    "        if (!isSyntax(e)) throw e;\n"
+    "        var nodes = nodesOf(String(text)), i, ref;\n"
+    "        switch (String(position).toLowerCase()) {\n"
+    "        case 'beforebegin': if (this.parentNode) for (i = 0; i < nodes.length; i++) this.parentNode.insertBefore(nodes[i], this); break;\n"
+    "        case 'afterbegin': ref = this.firstChild; for (i = 0; i < nodes.length; i++) this.insertBefore(nodes[i], ref); break;\n"
+    "        case 'beforeend': for (i = 0; i < nodes.length; i++) this.appendChild(nodes[i]); break;\n"
+    "        case 'afterend': if (this.parentNode) { ref = this.nextSibling; for (i = 0; i < nodes.length; i++) this.parentNode.insertBefore(nodes[i], ref); } break;\n"
+    "        default: throw e;\n"
+    "        }\n"
+    "      }\n"
+    "    };\n"
+    "  }\n"
+    "})();\n";
+
+/* The page's video/broadcast object decides where the live picture goes (picture in graphics). Only one that is really on screen counts:
+ * not sized 0, not display:none / visibility:hidden, not made invisible by an ancestor (opacity 0), not clipped away by an ancestor with
+ * overflow hidden, not outside the page. Any other object (the application may have several, one hidden) is skipped; none = whole screen. */
 static const char video_rect_script[] =
     "(function(){\n"
     "  if (window.top !== window || !window.webkit || !window.webkit.messageHandlers || !window.webkit.messageHandlers.e2video) return;\n"
     "  var last = '';\n"
+    "  function wpeVisibleRect(o) {\n"
+    "    var b = o.getBoundingClientRect();\n"
+    "    if (!(b.width > 1 && b.height > 1)) return null;\n"
+    "    var cs = getComputedStyle(o);\n"
+    "    if (cs.visibility === 'hidden' || cs.display === 'none') return null;\n"
+    "    var l = b.left, t = b.top, r = b.right, bt = b.bottom, opacity = parseFloat(cs.opacity), pos = cs.position;\n"
+    "    var clipping = pos !== 'absolute';\n"
+    "    if (pos === 'fixed') clipping = false;\n"
+    "    var e = o.parentElement, p, ps;\n"
+    "    while (e && e !== document.body && e !== document.documentElement) {\n"
+    "      ps = getComputedStyle(e);\n"
+    "      if (ps.display === 'none') return null;\n"
+    "      opacity *= parseFloat(ps.opacity);\n"
+    "      if (!clipping && ps.position !== 'static' && pos === 'absolute') clipping = true;\n"
+    "      if (clipping && (ps.overflowX !== 'visible' || ps.overflowY !== 'visible')) {\n"
+    "        p = e.getBoundingClientRect();\n"
+    "        if (p.width > 1 && p.height > 1) {\n"
+    "          l = Math.max(l, p.left); t = Math.max(t, p.top); r = Math.min(r, p.right); bt = Math.min(bt, p.bottom);\n"
+    "        }\n"
+    "      }\n"
+    "      e = e.parentElement;\n"
+    "    }\n"
+    "    if (opacity < 0.05) return null;\n"
+    "    l = Math.max(l, 0); t = Math.max(t, 0);\n"
+    "    r = Math.min(r, window.innerWidth || 1280); bt = Math.min(bt, window.innerHeight || 720);\n"
+    "    if (r - l <= 1 || bt - t <= 1) return null;\n"
+    "    return b;\n"
+    "  }\n"
     "  function tick() {\n"
-    "    var r = [0, 0, 0, 0], o = document.querySelector('object[type=\"video/broadcast\"]');\n"
-    "    if (o) {\n"
-    "      var b = o.getBoundingClientRect(), cs = getComputedStyle(o);\n"
-    "      if (cs.display !== 'none' && cs.visibility !== 'hidden' && b.width > 1 && b.height > 1)\n"
-    "        r = [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)];\n"
+    "    var r = [0, 0, 0, 0], list = document.querySelectorAll('object[type=\"video/broadcast\"]'), i, b;\n"
+    "    for (i = 0; i < list.length; i++) {\n"
+    "      b = wpeVisibleRect(list[i]);\n"
+    "      if (b) { r = [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)]; break; }\n"
     "    }\n"
     "    var s = r.join(',');\n"
     "    if (s !== last) { last = s; window.webkit.messageHandlers.e2video.postMessage(s); }\n"
@@ -2101,6 +2466,13 @@ static void on_load_failed(WebKitWebView *v, WebKitLoadEvent ev, const char *uri
     fprintf(stderr, "load-failed: %s: %s\n", uri, err ? err->message : "?");
     if (orb_mode)
         orb_host_load_failed(uri, err ? err->message : "");
+}
+
+/* --tolerant: WebKit's own error page is not drawn over the TV picture; the failure is only reported (above) */
+static gboolean on_load_failed_tolerant(WebKitWebView *v, WebKitLoadEvent ev, const char *uri, GError *err, gpointer data)
+{
+    on_load_failed(v, ev, uri, err, data);
+    return TRUE;
 }
 
 static char *ctl_path;
@@ -2265,6 +2637,19 @@ static void ctl_open(const char *path)
 static gboolean on_web_process_terminated(WebKitWebView *v, WebKitWebProcessTerminationReason r, gpointer data)
 {
     fprintf(stderr, "WEB PROCESS TERMINATED (reason %d)\n", (int)r);
+    if (tolerant) {
+        /* --tolerant: a crashed page is loaded again instead of ending the whole browser; not more than 3 times in a minute, then give up */
+        static gint64 stamps[3];
+        const gint64 now = g_get_monotonic_time();
+        if (now - stamps[0] > 60 * G_USEC_PER_SEC) {
+            stamps[0] = stamps[1];
+            stamps[1] = stamps[2];
+            stamps[2] = now;
+            fprintf(stderr, "--tolerant: reloading the page\n");
+            webkit_web_view_reload(v);
+            return TRUE;
+        }
+    }
     g_main_loop_quit(loop);
     return TRUE;
 }
@@ -2333,6 +2718,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--evt") && i + 1 < argc) evt_arg = argv[++i];
         else if (!strcmp(argv[i], "--trace")) trace = TRUE;
         else if (!strcmp(argv[i], "--fast-anim")) fast_anim = TRUE;
+        else if (!strcmp(argv[i], "--tolerant")) tolerant = TRUE;
         else if (!strcmp(argv[i], "--scrollbars")) show_scrollbars = TRUE;
         else if (!strcmp(argv[i], "--persist") && i + 1 < argc) persist_dir = argv[++i];
         else if (!strcmp(argv[i], "--no-debug-js")) no_debug_js = TRUE;
@@ -2489,6 +2875,11 @@ int main(int argc, char **argv)
         g_free(cache_dir);
     } else
         session = webkit_network_session_new_ephemeral();
+    if (tolerant) {
+        /* A set-top box's certificate store is old and its clock is often wrong: an HTTPS application whose certificate "fails" would not load at all */
+        webkit_network_session_set_tls_errors_policy(session, WEBKIT_TLS_ERRORS_POLICY_IGNORE);
+        fprintf(stderr, "--tolerant: TLS certificate errors are ignored\n");
+    }
     /* A TV has no pointer and no "user gesture": HbbTV applications start audio/video by themselves, with sound. WebKit's
      * default autoplay policy is ALLOW_WITHOUT_SOUND, which rejects play() of any clip that has an audio track
      * (NotAllowedError). (The media-playback-requires-user-gesture setting is off by default and is not what blocks it.) */
@@ -2553,12 +2944,17 @@ int main(int argc, char **argv)
         WebKitUserScript *script = webkit_user_script_new(source, WEBKIT_USER_CONTENT_INJECT_TOP_FRAME, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, NULL, NULL);
         webkit_user_content_manager_add_script(ucm, script);
         webkit_user_script_unref(script);
+        {
+            WebKitUserScript *fix = webkit_user_script_new(html_fix_script, WEBKIT_USER_CONTENT_INJECT_TOP_FRAME, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, NULL, NULL);
+            webkit_user_content_manager_add_script(ucm, fix); /* after the polyfill: wraps what it set up */
+            webkit_user_script_unref(fix);
+        }
         g_free(source);
         g_free(js_path);
         view = g_object_new(WEBKIT_TYPE_WEB_VIEW, "network-session", session, "user-content-manager", ucm, "website-policies", policies, NULL);
     } else
         view = g_object_new(WEBKIT_TYPE_WEB_VIEW, "network-session", session, "website-policies", policies, NULL);
-    g_signal_connect(view, "load-failed", G_CALLBACK(on_load_failed), NULL);
+    g_signal_connect(view, "load-failed", G_CALLBACK(tolerant ? on_load_failed_tolerant : on_load_failed), NULL);
     if (fine) { /* replaces the view's settings object: everything else has to be applied to the result, after this */
         WebKitSettings *settings = webkit_settings_new();
         set_fine_damage(settings);
@@ -2575,6 +2971,17 @@ int main(int argc, char **argv)
             webkit_settings_set_enable_write_console_messages_to_stdout(media_settings, TRUE);
         if (fast_anim)
             webkit_settings_set_enable_smooth_scrolling(media_settings, FALSE);
+        /* WPE_HW_ACCEL=never: composite the page in software and deliver plain shared-memory buffers. The 256 MB GPU heap of the box
+         * is shared with enigma2; with GPU compositing WebKit allocates a texture per tile and layer, and on heavy animated pages
+         * the heap runs out (dmesg: BMMA_Alloc failed / nexus_memory: Out of memory) - tiles are then lost = black rectangles. */
+        const char *accel = g_getenv("WPE_HW_ACCEL");
+        if (accel && !g_strcmp0(accel, "never")) {
+            if (g_object_class_find_property(G_OBJECT_GET_CLASS(media_settings), "hardware-acceleration-policy")) {
+                g_object_set(media_settings, "hardware-acceleration-policy", 2 /* WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER */, NULL);
+                fprintf(stderr, "hardware acceleration: never (software compositing, no GPU memory for page layers)\n");
+            } else
+                fprintf(stderr, "hardware acceleration: this WebKit has no such setting, WPE_HW_ACCEL ignored\n");
+        }
     }
     if (transparent) {
         WebKitColor color = { 0, 0, 0, 0 };

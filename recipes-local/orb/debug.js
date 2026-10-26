@@ -49,6 +49,32 @@
     };
     window.addEventListener('unhandledrejection', function (e) { send('unhandledrejection', [String(e.reason && e.reason.stack || e.reason)]); });
 
+    // Calls that throw a DOMException ("The string did not match the expected pattern" is XMLHttpRequest.open() with a bad method or URL, an
+    // invalid selector, ...): say which call, with what, and where from - the error event of such an exception carries no stack.
+    var thrown = 0;
+    function guard(owner, name, describe) {
+        var original = owner && owner[name];
+        if (typeof original !== 'function')
+            return;
+        owner[name] = function () {
+            try {
+                return original.apply(this, arguments);
+            } catch (e) {
+                if (thrown++ < 40)
+                    send('throws', [name, describe.apply(this, arguments), String(e && e.message), String(new Error().stack).split('\n').slice(1, 5).join(' | ')]);
+                throw e;
+            }
+        };
+    }
+    guard(window.XMLHttpRequest && XMLHttpRequest.prototype, 'open', function (m, u) { return m + ' ' + u; });
+    guard(Document.prototype, 'querySelector', function (s) { return s; });
+    guard(Document.prototype, 'querySelectorAll', function (s) { return s; });
+    guard(Element.prototype, 'querySelector', function (s) { return s; });
+    guard(Element.prototype, 'querySelectorAll', function (s) { return s; });
+    guard(Element.prototype, 'matches', function (s) { return s; });
+    guard(Element.prototype, 'setAttribute', function (n, v) { return n + '=' + v; });
+    guard(window, 'fetch', function (u) { return String(u && u.url || u); });
+
     // media elements: their events do not bubble, so listen in the capture phase
     ['loadstart', 'loadedmetadata', 'loadeddata', 'canplay', 'playing', 'play', 'pause', 'waiting', 'stalled', 'suspend', 'error', 'ended', 'seeking', 'seeked', 'abort', 'emptied', 'ratechange']
         .forEach(function (name) {

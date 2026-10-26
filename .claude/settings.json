@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /e/Enigma2Dev/OpenViX/hbbtv2.0/HbbTv2.0/recipes-local/enigma2-plugin-extensions-wpehbbtv; cat run_wpe.sh.rej wpe_fb.c.rej | tr -d '\\\\r'; rm *.orig)",
+      "Bash(cd /e/Enigma2Dev/OpenViX/hbbtv2.0/HbbTv2.0/recipes-local/enigma2-plugin-extensions-wpehbbtv; rm -f *.rej; grep -n \"egl_hold_ms\\\\|egl_key_fast_ms\\\\|KEY_FASTPATH\\\\|egl_dip_ms\\\\|egl_resync_ms\\\\|static.*held_take\\\\|static.*dip_copy\\\\|resync_note\\\\|static void egl_close\\\\|egl_ino\" wpe_fb.c | tr -d '\\\\r' | head -60; sed -n 25,40p run_wpe.sh | tr -d '\\\\r' | cut -c1-250)"
+    ],
+    "additionalDirectories": [
+      "E:\\Enigma2Dev\\OpenViX\\hbbtv2.0\\HbbTv2.0",
+      "E:\\Enigma2Dev\\OpenViX\\hbbtv2.0\\HbbTv2.0\\recipes-local\\enigma2-plugin-extensions-wpehbbtv"
+    ]
+  }
+}
