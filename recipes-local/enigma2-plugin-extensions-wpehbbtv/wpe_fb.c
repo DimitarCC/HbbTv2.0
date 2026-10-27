@@ -2461,11 +2461,12 @@ static gpointer orb_launch_thread(gpointer url)
     return NULL;
 }
 
-static void on_load_failed(WebKitWebView *v, WebKitLoadEvent ev, const char *uri, GError *err, gpointer data)
+static gboolean on_load_failed(WebKitWebView *v, WebKitLoadEvent ev, const char *uri, GError *err, gpointer data)
 {
     fprintf(stderr, "load-failed: %s: %s\n", uri, err ? err->message : "?");
     if (orb_mode)
         orb_host_load_failed(uri, err ? err->message : "");
+    return FALSE; /* not handled: WebKit shows its error page */
 }
 
 /* --tolerant: WebKit's own error page is not drawn over the TV picture; the failure is only reported (above) */
