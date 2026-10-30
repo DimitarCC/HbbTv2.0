@@ -13,14 +13,14 @@ It pulls changes from "https://github.com/OpenViX/HbbTv2.0/tree/master/recipes-l
 Let's us take snapshots of the ipk folder.
 e.g.
 
-Take a "before" snapshot: "python3 ipk_compare.py snapshot before.json"
+Take a "before" snapshot: "python3 ~/ipk_compare.py snapshot ~/before.json"
 
 Now do some build process...
 
-Take an "after" snapshot: "python3 ipk_compare.py snapshot after.json"
+Take an "after" snapshot: "python3 ~/ipk_compare.py snapshot ~/after.json"
 
 Now check what new packages have been created:
-python3 ipk_compare.py compare before.json after.json
+python3 ~/ipk_compare.py compare ~/before.json ~/after.json
 
 ========================================================================================================================================
 
@@ -31,4 +31,12 @@ python3 ipk_compare.py compare before.json after.json
 Grabs the created ipks and moves them to "~/www/feed-static-6.0" sub folders based on arch.
 Afterwards recreates "Packages" and "Packages.gz" using "recreate_feed.py" (not supplied here).
 
-"./collect_hbbtv_feed.py" to see args list.
+"~/collect_hbbtv_feed.py" to see args list.
+
+"~/collect_hbbtv_feed.py --dry-run --extras"
+"~/collect_hbbtv_feed.py --extras --index"
+
+python3 recreate_feed.py <folder>              # older versions are deleted
+python3 recreate_feed.py <folder> --keep-old   # older versions go to <folder>/old/
+./collect_hbbtv_feed.py --index                # deletes
+./collect_hbbtv_feed.py --index --keep-old     # passes the switch on
