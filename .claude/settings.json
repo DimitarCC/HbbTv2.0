@@ -80,7 +80,13 @@
       "Bash(awk 'NR>=92 && NR<=240' GrGLInterfaceAutogen.cpp)",
       "Bash(awk 'NR>=92 && NR<=215' GrGLInterfaceAutogen.cpp)",
       "Bash(grep -n \"fFunctions.fGetShaderPrecisionFormat\\\\|Fence\\\\|\\\\\\) {$\")",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(python /c/Users/dimit/AppData/Local/Temp/claude/e--Enigma2Dev-OpenViX-hbbtv2-0-HbbTv2-0/6d9a3815-a2a3-4791-81cb-5740a00f9472/scratchpad/ed3.py plugin.py)",
+      "Bash(python __TRACKED_VAR__/ed4.py .)",
+      "Bash(python -m py_compile WPEHbbTV/plugin.py)",
+      "Bash(rm -rf WPEHbbTV/__pycache__)",
+      "Bash(python __TRACKED_VAR__/ed5.py plugin.py)",
+      "Bash(python /c/Users/dimit/AppData/Local/Temp/claude/e--Enigma2Dev-OpenViX-hbbtv2-0-HbbTv2-0/6d9a3815-a2a3-4791-81cb-5740a00f9472/scratchpad/ed6.py plugin.py)"
     ],
     "additionalDirectories": [
       "E:\\Enigma2Dev\\OpenViX\\hbbtv2.0\\HbbTv2.0",

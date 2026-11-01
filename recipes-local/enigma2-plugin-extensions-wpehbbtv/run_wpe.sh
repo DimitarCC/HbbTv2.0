@@ -20,11 +20,14 @@ ORB=${WPE_ORB_DIR:-/usr/lib/orb}
 #   WPE_HIDPI       render scale: 1.5 = sharp, 1.25, 1.0 = fast (default). The read-back of a frame from the GPU costs time in
 #                   proportion to its pixels: 1.0 is ~3 times quicker to react than 1.5
 #   WPE_FAST_ANIM   1: CSS transitions/animations last 1 ms, no smooth scrolling (fewer frames per key press); default 1
-#   WPE_PERSIST     1: HTTP cache (<= 75 MB), cookies and local storage survive between runs (default 1, needs /media/hdd)
-#   WPE_PERSIST_DIR where they live (default /media/hdd/.wpe-data)
+#   WPE_PERSIST     1: HTTP cache (<= 75 MB), cookies and local storage survive between runs (default 1)
+#   WPE_PERSIST_DIR where they live (default /media/hdd/.wpe-data; on a box without a disk or USB stick - less than 100 MB free there - /tmp/wpe-data, lost at reboot)
+#   WPE_TOLERANT    1: ignore TLS certificate errors, no error page, reload a crashed page; default 1
 #   WPE_DEBUG       1: debug.js (the page's console and media events in /tmp/wpe_fb.log) and GStreamer debug output; default 0
+#   WPE_SKIA_CPU    1: paint on the CPU, 0: on the GPU; default 0
+#   WPE_COVER_AREA, WPE_SKIA_CACHE_MB, WPE_TEXTURE_POOL_MB  GPU memory (see below); defaults 2, 32, 16
 #   WPE_LIMIT_REPEAT 1: pass the remote's auto-repeat on at most once per delivered frame, so a held key moves fewer steps; a matter
-#                   of feel, it does not make the page settle sooner (docs/phase1-results.txt); default 1
+#                   of feel, it does not make the page settle sooner (docs/phase1-results.txt); default 0
 CONF=/etc/enigma2/wpehbbtv.conf 
 if [ -f "$CONF" ]; then
 	while IFS='=' read -r k v; do
@@ -36,10 +39,24 @@ fi
 export WPE_HW_ACCEL WPE_EGL_NO_TRIM WPE_EGL_DIP_MS WPE_EGL_PIG_SETTLE_MS WPE_EGL_PIG_FIRST_MS WPE_EGL_DEBUG_RECTS WPE_EGL_NO_HOLE WPE_NO_NEXUS_JOIN WPE_EGL_RESYNC_MS WPE_EGL_SETTLE_MS WPE_EGL_MAX_DELAY_MS WPE_EGL_KEY_MS WPE_EGL_HOLD_MS WPE_EGL_HOLD_CLEAR # read by wpe_fb --egl-sink (empty = its defaults)
 # defaults for what the conf file (or the environment) leaves unset
 : "${WPE_EGL_SETTLE_MS:=0}" "${WPE_EGL_MAX_DELAY_MS:=0}" "${WPE_EGL_HOLD_MS:=0}" "${WPE_EGL_HOLD_CLEAR:=0}" "${WPE_EGL_KEY_MS:=400}" "${WPE_EGL_NO_HOLE:=0}" "${WPE_NICE:=-20}"
-: "${WPE_EGL_PIG_FIRST_MS:=3000}" "${WPE_EGL_DIP_MS:=300}" "${WPE_SKIA_CPU:=1}"
+: "${WPE_EGL_PIG_FIRST_MS:=3000}" "${WPE_EGL_DIP_MS:=300}" "${WPE_SKIA_CPU:=0}"
+: "${WPE_TOLERANT:=1}" "${WPE_DEBUG:=0}" "${WPE_LIMIT_REPEAT:=0}" "${WPE_COVER_AREA:=2}" "${WPE_SKIA_CACHE_MB:=32}" "${WPE_TEXTURE_POOL_MB:=16}"
 case "$WPE_HIDPI" in 1 | 1.0 | 1.25 | 1.5) ;; *) WPE_HIDPI=1.0 ;; esac
 WPE_PERSIST_DIR=${WPE_PERSIST_DIR:-/media/hdd/.wpe-data}
 case "$WPE_PERSIST_DIR" in /*[!A-Za-z0-9_./-]* | [!/]*) WPE_PERSIST_DIR=/media/hdd/.wpe-data ;; esac # an absolute plain path, else the default
+# Real storage = a writable directory on a filesystem with room (>= 100 MB free). On a box with no disk or USB stick /media is a tiny tmpfs: the cache
+# fills it at once ("database or disk is full") and the page stops after its first screen. Without storage the data goes to /tmp (RAM, gone at reboot).
+free_kb() { # free KB of the filesystem of a directory
+	df -Pk "$1" 2>/dev/null | tail -n 1 | { read -r _ _ _ avail _; echo "$avail"; }
+}
+has_storage() { # is the directory that will hold $1 writable and roomy?
+	_dir=$(dirname "$1")
+	[ -d "$_dir" ] && [ -w "$_dir" ] || return 1
+	_kb=$(free_kb "$_dir")
+	case "$_kb" in '' | *[!0-9]*) return 1 ;; esac
+	[ "$_kb" -ge 102400 ]
+}
+has_storage "$WPE_PERSIST_DIR" || WPE_PERSIST_DIR=/tmp/wpe-data
 OPTS="--hidpi $WPE_HIDPI --transparent --fine-damage"
 # Output: enigma2's own EGL renderer (gEGLDC) composites the page when it listens for it (its wake-up socket exists: window-surface platforms such as
 # the GigaBlue/Nexus boxes) - no second display window, no CPU conversion/scaling here. WPE_EGL=0 forces the old framebuffer / NXPL path, 1 forces this one.
@@ -48,9 +65,9 @@ OUTMODE="--fb --fullscreen"
 [ "$WPE_EGL" = 1 ] && [ "$WPE_OVERLAY" != 1 ] && OUTMODE="--egl-sink"
 [ "${WPE_FAST_ANIM:-1}" = 1 ] && OPTS="$OPTS --fast-anim"
 # WPE_TOLERANT (default 0): ignore TLS certificate errors, no WebKit error page on a failed load, reload a crashed page instead of quitting
-[ "${WPE_TOLERANT:-0}" = 1 ] && OPTS="$OPTS --tolerant"
+[ "${WPE_TOLERANT:-1}" = 1 ] && OPTS="$OPTS --tolerant"
 [ "${WPE_DEBUG:-0}" = 1 ] || OPTS="$OPTS --no-debug-js"
-[ "${WPE_LIMIT_REPEAT:-1}" = 1 ] && OPTS="$OPTS --limit-repeat"
+[ "${WPE_LIMIT_REPEAT:-0}" = 1 ] && OPTS="$OPTS --limit-repeat"
 [ "$WPE_OVERLAY" = 1 ] && OPTS="$OPTS --overlay-png /tmp/wpe_overlay" # set by the plugin for the automatic banner: no framebuffer, the visible part of each frame as a PNG that the plugin shows in a screen of enigma2
 if [ "${WPE_PERSIST:-1}" = 1 ] && [ -d "$(dirname "$WPE_PERSIST_DIR")" ] && [ -w "$(dirname "$WPE_PERSIST_DIR")" ]; then
 	OPTS="$OPTS --persist $WPE_PERSIST_DIR"
@@ -104,7 +121,7 @@ fi
 # up within half a minute at broadband speed; and the default buffering thresholds (100 KB) are a tenth of a second of HD video, which
 # makes the player stall over and over. Put the file on the disk (WebKit unlinks it right after creating it) and size the buffer for video.
 CACHE=${WPE_MEDIA_CACHE:-/media/hdd/.wpe-mediacache}
-if [ -z "$WPE_MEDIA_CACHE" ] && [ ! -w /media/hdd ]; then
+if [ -z "$WPE_MEDIA_CACHE" ] && ! has_storage "$CACHE"; then
 	CACHE=/tmp/wpe-mediacache
 fi
 mkdir -p "$CACHE"

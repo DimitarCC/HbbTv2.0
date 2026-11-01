@@ -107,7 +107,9 @@ S = "${UNPACKDIR}"
 # diagnostic addition again, no behaviour change: min/max now also record the actual uploaded width/height (not just total px, and fixed a
 # reporting bug where the full-width branch was under-reporting px using the narrow dirty-rect width instead of out.ow) - the next capture shows
 # the real shape directly instead of guessing again before deciding whether/how to special-case narrow-tall regions.
-PR = "r29"
+# r30: new defaults (tolerant, GPU painting, cover area 2, Skia cache 32 MB, texture pool 16 MB, no repeat limit); the red button needs an EGL 1.4 / GLES 2.0
+# that enigma2 reports (else a message); the AIT is read and parsed in a thread from evStart on (aborted by evEnd); no disk/USB stick => storage in /tmp/wpe-data.
+PR = "r30"
 
 # wpewebkit: the browser engine and its headers; orb: the engine, orb_host.h and the libraries wpe_fb is linked against
 DEPENDS = "wpewebkit orb glib-2.0 libsoup"
