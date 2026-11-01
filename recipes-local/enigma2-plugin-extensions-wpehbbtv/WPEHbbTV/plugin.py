@@ -21,10 +21,12 @@ import os
 import queue
 import re
 import select
+import socket
 import struct
 import threading
 import time
 from sys import maxsize
+from urllib.parse import urlparse
 
 from enigma import eActionMap, eConsoleAppContainer, ePoint, eSize, eTimer, getDesktop, iPlayableService, iServiceInformation
 from Components.ActionMap import ActionMap
@@ -37,6 +39,15 @@ from Components.Label import Label
 from Screens.MessageBox import MessageBox
 from Screens.Screen import Screen
 from Screens.Setup import Setup
+
+try:
+	from enigma import getEGLVersionString, getGLESVersionString
+except ImportError:  # an enigma2 that does not report them
+	def getEGLVersionString():
+		return ""
+
+	def getGLESVersionString():
+		return ""
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 RUN = f"{BASE}/run_wpe.sh"
@@ -685,6 +696,27 @@ def pageChosen(session, choice, channel=None, ait=None, pressRed=False):
 		session.open(WPEScreen, page, hwvideo, channel, ait, pressRed)
 
 
+MIN_EGL = (1, 4)  # what WPE WebKit needs of the driver
+MIN_GLES = (2, 0)
+
+
+def versionOf(text, pattern):
+	m = re.search(pattern, text or "")
+	return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def glSupport():
+	"""(True, "") when enigma2 reports an EGL and an OpenGL ES version that WPE WebKit can use, else (False, a message for the user).
+	enigma2 reports what its own EGL renderer got from the driver (getEGLVersionString / getGLESVersionString): nothing when it does not run on EGL."""
+	egl, gles = getEGLVersionString().strip(), getGLESVersionString().strip()
+	eglVersion = versionOf(egl, r"^(\d+)\.(\d+)")
+	glesVersion = versionOf(gles, r"OpenGL ES(?:-\w+)? (\d+)\.(\d+)")
+	if eglVersion and glesVersion and eglVersion >= MIN_EGL and glesVersion >= MIN_GLES:
+		return True, ""
+	return False, "HbbTV is not supported on this system.\n\nIt needs EGL %d.%d and OpenGL ES %d.%d or newer.\nenigma2 reports: EGL %s, OpenGL ES %s." % (
+		MIN_EGL + MIN_GLES + (egl or "none", gles.split(' "', 1)[0] or "none"))
+
+
 def main(session, **kwargs):
 	if not os.path.isdir(PAGES):
 		session.open(MessageBox, f"{PAGES} not found", MessageBox.TYPE_ERROR)
@@ -879,33 +911,43 @@ class AitCollection:
 		self.pid = None
 		self.sections = {}  # section_number -> bytes
 		self.failed = False  # no AIT signalled, or it could not be read
+		self.lock = threading.Lock()  # the prefetch thread (ChannelPrefetch) and the main thread both read the reader's events
+		self.parsed = None  # apps(), until a section changes
+		self.changes = 0  # how many sections have arrived or changed so far
 
 	def drain(self):
 		"""Take over what the reader found since the last call: the new or changed sections."""
 		changed = []
-		while True:
-			try:
-				event = self.reader.events.get_nowait()
-			except queue.Empty:
-				return changed
-			if event[0] == "section":
-				self.pid = event[1]
-				self.sections[event[2][6]] = event[2]
-				changed.append(event[2])
-			else:
-				self.failed = True
+		with self.lock:
+			while True:
+				try:
+					event = self.reader.events.get_nowait()
+				except queue.Empty:
+					return changed
+				if event[0] == "section":
+					self.pid = event[1]
+					self.sections[event[2][6]] = event[2]
+					self.parsed = None
+					self.changes += 1
+					changed.append(event[2])
+				else:
+					self.failed = True
 
 	def complete(self):
-		if not self.sections:
-			return False
-		last = next(iter(self.sections.values()))[7]  # last_section_number
-		return all(number in self.sections for number in range(last + 1))
+		with self.lock:
+			if not self.sections:
+				return False
+			last = next(iter(self.sections.values()))[7]  # last_section_number
+			return all(number in self.sections for number in range(last + 1))
 
 	def apps(self):
-		found = []
-		for number in sorted(self.sections):
-			found.extend(parseAit(self.sections[number]))
-		return found
+		with self.lock:
+			if self.parsed is None:
+				found = []
+				for number in sorted(self.sections):
+					found.extend(parseAit(self.sections[number]))
+				self.parsed = found
+			return list(self.parsed)
 
 	def text(self):
 		"""The sections as the lines "<pid> <sid> <hex>" that run_wpe.sh feeds to wpe_fb."""
@@ -931,17 +973,28 @@ class ChannelAppLauncher:
 		self.afterBox.callback.append(self.chosen)
 
 	def start(self):
-		try:
-			started = startAitReader(self.session)
-		except Exception as error:
-			print("[WPEHbbTV] cannot read the AIT: %s" % error)
-			started = None
-		if not started:
-			self.fallback()
-			return
-		self.ait = AitCollection(*started)
-		self.box = None  # no "Reading the HbbTV application information" message box: the AIT is read silently
-		self.timer.start(200, False)
+		self.ait = takePrefetched(self.session)  # read (and parsed) since the channel started, when that has been going on
+		if self.ait is not None and self.ait.failed and not self.redButton:  # the menu shows the list: a prefetch that found nothing is read again
+			self.ait.stop()
+			self.ait = None
+		if self.ait is None:
+			try:
+				started = startAitReader(self.session)
+			except Exception as error:
+				print("[WPEHbbTV] cannot read the AIT: %s" % error)
+				started = None
+			if not started:
+				self.fallback()
+				return
+			self.ait = AitCollection(*started)
+		self.box = None
+		self.seen = -1  # section count at the last poll
+		self.stable = 0.0  # seconds without a new section
+		self.ait.drain()
+		if self.ready():  # the prefetch has what is needed: no waiting
+			self.afterBox.start(0, True)
+		else:
+			self.timer.start(200, False)
 
 	def closeBox(self):
 		if self.box:
@@ -951,10 +1004,29 @@ class ChannelAppLauncher:
 				pass
 			self.box = None
 
+	def ready(self):
+		"""Can the choice be made now? The red button needs only the autostart application (the rest of the table follows by itself, the engine gets
+		every section); the Extensions menu offers the list of all applications, so it needs the table complete and no longer changing."""
+		if self.ait.failed:
+			return True
+		if self.redButton:
+			return any(app["control"] == 1 and app["http"] for app in self.ait.apps())
+		return self.ait.complete() and self.stable >= 1.0
+
 	def poll(self):
 		self.ait.drain()
 		self.waited += 0.2
-		if self.ait.complete() or self.ait.failed or self.waited >= AIT_TIMEOUT + 1:
+		if self.ait.changes != self.seen:
+			self.seen, self.stable = self.ait.changes, 0.0
+		else:
+			self.stable += 0.2
+		ready = self.ready()
+		if self.box is None and not self.redButton and not ready and self.waited >= 0.6:  # (the red button starts the application without a message)
+			try:
+				self.box = self.session.open(MessageBox, "Loading the list of HbbTV applications...", MessageBox.TYPE_INFO, enable_input=False)
+			except Exception as error:
+				print("[WPEHbbTV] cannot show the loading message: %s" % error)
+		if ready or self.ait.failed or self.waited >= AIT_TIMEOUT + 1:
 			self.timer.stop()
 			# A modal screen that is closed only leaves when the session has run its delay timer; until then nothing is executing and opening the next
 			# one raises "Modal open are allowed only from a screen which is modal!" - and enigma2 is left with no screen to take keys (it was killed).
@@ -973,8 +1045,10 @@ class ChannelAppLauncher:
 			self.fallback()
 			return
 		autostart = [app for app in apps if app["control"] == 1]
-		if len(apps) == 1 or (autostart and len(apps) == len(autostart)) or (self.redButton and autostart):
-			self.launch(autostart[0] if autostart else apps[0])  # only one to choose (the red button always takes the autostart application)
+		print("[WPEHbbTV] AIT: %d application(s), %d autostart, %s" % (len(apps), len(autostart), "red button" if self.redButton else "extensions menu"))
+		# the red button takes the autostart application; the Extensions menu always offers the list (even of one application), so the user sees what the channel signals
+		if self.redButton and (len(apps) == 1 or autostart):
+			self.launch(autostart[0] if autostart else apps[0])
 			return
 		entries = [("%s%s" % (appName(app), "  (autostart)" if app["control"] == 1 else ""), app) for app in sorted(apps, key=lambda a: a["control"] != 1)]
 		self.session.openWithCallback(self.picked, ChoiceBox, title="HbbTV applications of %s  (EXIT closes)" % self.ait.channel[3], list=entries)
@@ -1005,9 +1079,109 @@ screens = []  # the application screens that are open (WPEScreen adds itself, cl
 def channelApp(session, redButton=False, **kwargs):
 	if screens or any(controller.overlay for controller in autostart):  # an application is on the screen already
 		return
+	supported, reason = glSupport()
+	if not supported:
+		session.open(MessageBox, reason, MessageBox.TYPE_ERROR, timeout=10)
+		return
 	launcher = ChannelAppLauncher(session, redButton)
 	launchers[:] = [launcher]
 	launcher.start()
+
+
+class ChannelPrefetch:
+	"""Starts reading the AIT of a service as soon as enigma2 starts it (evStart), so that the red button (or the automatic banner) finds the
+	applications already read and parsed instead of starting from nothing. The slow parts - waiting for the PMT/AIT sections, parsing them, resolving the
+	host name of the autostart application - run in a thread; evEnd (the service stops) or another evStart aborts it. takePrefetched() hands the result
+	over, after which the caller owns (and stops) the collection."""
+
+	TRIES = 20  # x 500 ms for enigma2 to know the PMT PID of the new service
+
+	def __init__(self, session):
+		self.session = session
+		self.collection = None
+		self.cancelled = None  # threading.Event of the running thread
+		self.tries = 0
+		self.timer = eTimer()
+		self.timer.callback.append(self.tick)
+		session.nav.event.append(self.navEvent)
+
+	def wanted(self):
+		settings = readSettings()
+		return (settings["WPE_REDBUTTON"] == "1" or settings["WPE_AUTOSTART"] == "1") and glSupport()[0] and not screens and not any(c.overlay for c in autostart)
+
+	def navEvent(self, event):
+		if event in (iPlayableService.evStart, iPlayableService.evEnd):
+			self.abort()
+		if event == iPlayableService.evStart and self.wanted():
+			self.tries = 0
+			self.timer.start(500, False)
+
+	def abort(self):
+		self.timer.stop()
+		if self.cancelled:
+			self.cancelled.set()
+		if self.collection:
+			self.collection.stop()
+		self.collection = self.cancelled = None
+
+	def tick(self):
+		self.tries += 1
+		try:
+			started = startAitReader(self.session)
+		except Exception as error:
+			print("[WPEHbbTV] prefetch: cannot read the AIT: %s" % error)
+			started = None
+		if started:
+			self.timer.stop()
+			self.collection = AitCollection(*started)
+			self.cancelled = threading.Event()
+			threading.Thread(target=self.work, args=(self.collection, self.cancelled), name="WPEHbbTV-prefetch", daemon=True).start()
+		elif self.tries >= self.TRIES:
+			self.timer.stop()
+
+	@staticmethod
+	def work(collection, cancelled):
+		"""The thread: collect the sections until the table is complete, parse it, resolve the host of the autostart application."""
+		while not cancelled.is_set():
+			collection.drain()
+			if collection.failed:
+				return
+			if collection.complete():
+				break
+			cancelled.wait(0.1)
+		else:
+			return
+		for app in collection.apps():  # (parsed once, kept by the collection)
+			if cancelled.is_set():
+				return
+			if app["control"] == 1 and app["http"]:
+				host = urlparse(app["http"][0]).hostname
+				if host:
+					try:
+						socket.getaddrinfo(host, None)  # the resolver caches the answer: the page's first request does not wait for it
+					except OSError:
+						pass
+				return
+
+	def take(self):
+		"""The collection of the service that is playing now, or None. The thread is stopped; the caller drains and stops the collection from here on."""
+		collection, cancelled = self.collection, self.cancelled
+		self.collection = self.cancelled = None
+		if collection is None:
+			return None
+		cancelled.set()
+		channel = currentChannel(self.session)
+		if not channel or tuple(channel[:3]) != tuple(collection.channel[:3]):
+			collection.stop()
+			return None
+		return collection
+
+
+prefetchers = []  # the prefetch of the session (one)
+
+
+def takePrefetched(session):
+	return prefetchers[0].take() if prefetchers else None
 
 
 def prepareSkin():
@@ -1066,13 +1240,18 @@ class AutoStart:
 			return
 		if channel is None or not self.enabled() or screens or self.collection:
 			return
-		try:
-			started = startAitReader(self.session)
-		except Exception as error:
-			print("[WPEHbbTV] autostart: cannot read the AIT: %s" % error)
+		if not glSupport()[0]:
 			return
-		if started:
-			self.collection = AitCollection(*started)
+		collection = takePrefetched(self.session)
+		if collection is None:
+			try:
+				started = startAitReader(self.session)
+			except Exception as error:
+				print("[WPEHbbTV] autostart: cannot read the AIT: %s" % error)
+				return
+			collection = AitCollection(*started) if started else None
+		if collection:
+			self.collection = collection
 			self.waited = 0.0
 			self.aitTimer.start(300, False)
 
@@ -1171,6 +1350,7 @@ def sessionStart(reason, session=None, **kwargs):
 	if reason == 0 and session is not None and not hooks:
 		hooks.append(RedButtonHook(session))
 		autostart.append(AutoStart(session))
+		prefetchers.append(ChannelPrefetch(session))
 
 
 
@@ -1194,10 +1374,10 @@ SETTING_GROUPS = [
 		("WPE_AUTOSTART", "Automatic banner when zapping", ON_OFF, "0",
 			"Start the AUTOSTART application of a channel by itself, on top of the live picture, a few seconds after zapping."),
 		("WPE_PERSIST", "Keep cache, cookies and storage", [("1", "yes"), ("0", "no")], "1",
-			"The HTTP cache (up to 75 MB), cookies and local storage of the applications survive between runs. Needs /media/hdd."),
+			"The HTTP cache (up to 75 MB), cookies and local storage of the applications survive between runs. Without a disk or USB stick they are kept in /tmp/wpe-data and lost at reboot."),
 		("WPE_PERSIST_DIR", "Storage directory", None, "",
-			"Where they live. Empty = /media/hdd/.wpe-data. An absolute path of letters, digits and _ . / -"),
-		("WPE_TOLERANT", "Tolerant mode", ON_OFF, "0",
+			"Where they live. Empty = /media/hdd/.wpe-data, or /tmp/wpe-data when there is less than 100 MB free there. An absolute path of letters, digits and _ . / -"),
+		("WPE_TOLERANT", "Tolerant mode", ON_OFF, "1",
 			"Ignore TLS certificate errors, show no WebKit error page for a failed load, and reload a crashed page instead of quitting."),
 		("WPE_DEBUG", "Debug log (slower)", ON_OFF, "0",
 			"The page's console, media events, every network request and GStreamer output go to /tmp/wpe_fb.log."),
@@ -1207,17 +1387,17 @@ SETTING_GROUPS = [
 			"The read-back of a frame costs time in proportion to its pixels: 1.0 reacts about three times quicker than 1.5."),
 		("WPE_FAST_ANIM", "Shorter animations", [("1", "on"), ("0", "off")], "1",
 			"CSS transitions and animations last 1 ms and there is no smooth scrolling: fewer frames per key press."),
-		("WPE_SKIA_CPU", "Page painting", [("1", "CPU"), ("0", "GPU")], "1",
+		("WPE_SKIA_CPU", "Page painting", [("1", "CPU"), ("0", "GPU")], "0",
 			"CPU painting uses little GPU memory (no black tiles) and is only slightly slower. GPU painting keeps tiles as GPU textures."),
 		("WPE_HW_ACCEL", "Software compositing", [("", "off"), ("never", "on")], "",
 			"Composite the page in software: no GPU memory is used for page layers."),
 	]),
 	("GPU memory", [
-		("WPE_COVER_AREA", "Tile cover area", [("", "default (2)"), ("1", "1 (visible area only)"), ("1.5", "1.5"), ("2", "2"), ("3", "3"), ("4", "4")], "",
-			"Area kept in tiles as a multiple of the visible area, squared (the default 2 keeps four times the visible area). Lower = less GPU memory."),
-		("WPE_SKIA_CACHE_MB", "Skia GPU cache", [("", "default")] + [(str(v), "%d MB" % v) for v in (8, 16, 32, 64, 128, 256)], "",
+		("WPE_COVER_AREA", "Tile cover area", [("1", "1 (visible area only)"), ("1.5", "1.5"), ("2", "2 (WebKit default)"), ("3", "3"), ("4", "4")], "2",
+			"Area kept in tiles as a multiple of the visible area, squared (WebKit's own 2 keeps four times the visible area). Lower = less GPU memory."),
+		("WPE_SKIA_CACHE_MB", "Skia GPU cache", [(str(v), "%d MB" % v) for v in (8, 16, 32, 64, 128, 256)], "32",
 			"Limit of the Skia GPU resource cache."),
-		("WPE_TEXTURE_POOL_MB", "Unused tile texture pool", [("", "default")] + [(str(v), "%d MB" % v) for v in (16, 32, 64, 128, 256)], "",
+		("WPE_TEXTURE_POOL_MB", "Unused tile texture pool", [(str(v), "%d MB" % v) for v in (16, 32, 64, 128, 256)], "16",
 			"Above this size unused tile textures are released after 50 ms instead of 3 s."),
 		("WPE_TILE_SIZE", "Tile size (GPU painting)", [("", "default"), ("256x256", "256 x 256"), ("512x256", "512 x 256"), ("512x512", "512 x 512"), ("1024x256", "1024 x 256")], "",
 			"The GPU default is as wide as the viewport; smaller tiles allocate less memory per update."),
@@ -1229,7 +1409,7 @@ SETTING_GROUPS = [
 			"Automatic: fences on Nexus boxes, off on others. Disable them when the driver crashes in glFlush() or has no fence sync."),
 	]),
 	("Output and keys", [
-		("WPE_LIMIT_REPEAT", "Limit key repeat", [("1", "on"), ("0", "off")], "1",
+		("WPE_LIMIT_REPEAT", "Limit key repeat", [("1", "on"), ("0", "off")], "0",
 			"Pass the remote's auto-repeat on at most once per delivered frame: a held key moves fewer steps (a matter of feel, not speed)."),
 		("WPE_NICE", "Process priority (nice)", [(str(v), str(v)) for v in (-20, -10, -5, 0, 5, 10)], "-20",
 			"Scheduling priority of wpe_fb and its web processes: -20 highest, 19 lowest."),
