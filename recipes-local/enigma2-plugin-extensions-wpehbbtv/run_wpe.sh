@@ -84,6 +84,10 @@ chmod 700 "$XDG_RUNTIME_DIR"
 # (a WEBKIT_DISABLE_GL_FENCE already in the environment wins: set it to 1 on a Nexus box whose GLES2-only driver has no fence sync)
 if [ -n "$WEBKIT_DISABLE_GL_FENCE" ]; then
 	export WEBKIT_DISABLE_GL_FENCE
+elif [ -e /dev/vc5 ]; then
+	# Dreambox (libvc5dream + libv3ddriver), also in EGL mode: glClientWaitSync/glFlush on a fence queues a bin-only job and libvc5dream's
+	# QueueBinRender copies its NULL render job (SIGSEGV in memcpy, compositor thread; the gdb stack of a dm900 shows glClientWaitSync -> bin-only job)
+	export WEBKIT_DISABLE_GL_FENCE=1
 elif [ "$WPE_EGL" = 1 ] || [ -e /dev/nexus ]; then
 	export WEBKIT_DISABLE_GL_FENCE=0
 else

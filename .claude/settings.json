@@ -86,7 +86,17 @@
       "Bash(python -m py_compile WPEHbbTV/plugin.py)",
       "Bash(rm -rf WPEHbbTV/__pycache__)",
       "Bash(python __TRACKED_VAR__/ed5.py plugin.py)",
-      "Bash(python /c/Users/dimit/AppData/Local/Temp/claude/e--Enigma2Dev-OpenViX-hbbtv2-0-HbbTv2-0/6d9a3815-a2a3-4791-81cb-5740a00f9472/scratchpad/ed6.py plugin.py)"
+      "Bash(python /c/Users/dimit/AppData/Local/Temp/claude/e--Enigma2Dev-OpenViX-hbbtv2-0-HbbTv2-0/6d9a3815-a2a3-4791-81cb-5740a00f9472/scratchpad/ed6.py plugin.py)",
+      "Bash(PYTHONIOENCODING=utf8 python -c ' *)",
+      "Bash(cd \"E:/Enigma2Dev\" && grep -rIl \"vc5dream\" --include=* . 2>/dev/null | head; find / -iname \"libvc5dream*\" 2>/dev/null | head; find /c/Users/dimit -iname \"libvc5dream*\" 2>/dev/null | head)",
+      "Bash(python -c \"import capstone\")",
+      "Bash(python -c \"import elftools\")",
+      "Bash(PYTHONIOENCODING=utf8 python -I dis.py \"C:/Users/dimit/Downloads/Telegram Desktop/libvc5dream.so.1.0.0\" 2bc0 2cc0)",
+      "Bash(python -m pip install --quiet pyelftools capstone)",
+      "Bash(PYTHONIOENCODING=utf8 python dis.py \"C:/Users/dimit/Downloads/Telegram Desktop/libvc5dream.so.1.0.0\" 2bc0 2cc0)",
+      "Bash(mv dis.py armdis.py)",
+      "Bash(PYTHONIOENCODING=utf8 python armdis.py \"C:/Users/dimit/Downloads/Telegram Desktop/libvc5dream.so.1.0.0\" 2b80 2cc0)",
+      "Bash(python mk23.py)"
     ],
     "additionalDirectories": [
       "E:\\Enigma2Dev\\OpenViX\\hbbtv2.0\\HbbTv2.0",

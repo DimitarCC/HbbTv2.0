@@ -2949,6 +2949,8 @@ int main(int argc, char **argv)
         webkit_web_context_set_web_process_extensions_directory(wctx, ext_dir);
         g_free(ext_dir);
         webkit_security_manager_register_uri_scheme_as_cors_enabled(webkit_web_context_get_security_manager(wctx), "orb");
+        /* secure: an https application puts orb://player in an iframe; without this WebKit blocks it as mixed ("insecure") content and the video never plays */
+        webkit_security_manager_register_uri_scheme_as_secure(webkit_web_context_get_security_manager(wctx), "orb");
         webkit_web_context_register_uri_scheme(wctx, "orb", on_orb_scheme_request, NULL, NULL);
 
         orb_socket = g_strdup_printf("/tmp/orb_bridge.%d.sock", (int)getpid());
