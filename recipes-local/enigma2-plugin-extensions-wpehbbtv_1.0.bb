@@ -109,7 +109,9 @@ S = "${UNPACKDIR}"
 # the real shape directly instead of guessing again before deciding whether/how to special-case narrow-tall regions.
 # r30: new defaults (tolerant, GPU painting, cover area 2, Skia cache 32 MB, texture pool 16 MB, no repeat limit); the red button needs an EGL 1.4 / GLES 2.0
 # that enigma2 reports (else a message); the AIT is read and parsed in a thread from evStart on (aborted by evEnd); no disk/USB stick => storage in /tmp/wpe-data.
-PR = "r30"
+PR = "r31"
+# r31 (cont.): Dreambox (/dev/vc5) always runs with WEBKIT_DISABLE_GL_FENCE=1, also in EGL mode (the fence flush crashed the web process in libvc5dream).
+# r31: the orb:// scheme is registered as secure, so that an https application's orb://player iframe (the video/ads player) is not blocked as mixed content
 
 # wpewebkit: the browser engine and its headers; orb: the engine, orb_host.h and the libraries wpe_fb is linked against
 DEPENDS = "wpewebkit orb glib-2.0 libsoup"
