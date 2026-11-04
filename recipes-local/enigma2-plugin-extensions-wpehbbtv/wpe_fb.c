@@ -2476,6 +2476,19 @@ static void on_orb_scheme_request(WebKitURISchemeRequest *request, gpointer data
     g_string_append_len(html, page, head_len);
     g_string_append_printf(html, "\n<script type=\"text/javascript\">\ndocument.token = %s;\n</script>\n", token && *token ? token : "{}");
     g_string_append_printf(html, "<script type=\"text/javascript\">\n%s\n</script>\n<script type=\"text/javascript\">\n%s\n</script>\n", iframe_js, dash_js);
+    /* dash.js synchronises its clock with the manifest's UTCTiming source, and a failed request ("Failed to synchronize client and server time", error 16)
+     * is fatal: the player stops before it asks for one segment. For an on-demand (static) manifest the server time is of no use, so no synchronisation
+     * for those (a live stream still has to). Wraps dashjs.MediaPlayer().create(), after dash.js and before iframe.js creates its player on load. */
+    static const char dash_static_no_sync[] =
+        "(function(){try{var ns=window.dashjs;if(!ns||typeof ns.MediaPlayer!=='function')return;var Orig=ns.MediaPlayer;"
+        "function patch(p){try{if(p&&typeof p.on==='function'&&typeof p.updateSettings==='function'){"
+        "p.on('manifestLoaded',function(e){try{var st=!!(e&&e.data&&e.data.type==='static');"
+        "p.updateSettings({streaming:{utcSynchronization:{enabled:!st}}});}catch(x){}});}}catch(x){}return p;}"
+        "var Wrapped=function(){var f=Orig.apply(this,arguments);"
+        "if(f&&typeof f.create==='function'&&!f.__orbPatched){var c=f.create;f.create=function(){return patch(c.apply(this,arguments));};f.__orbPatched=true;}return f;};"
+        "for(var k in Orig){if(Object.prototype.hasOwnProperty.call(Orig,k))Wrapped[k]=Orig[k];}"
+        "ns.MediaPlayer=Wrapped;}catch(e){}})();";
+    g_string_append_printf(html, "<script type=\"text/javascript\">\n%s\n</script>\n", dash_static_no_sync);
     g_string_append(html, head_end ? head_end : "");
     free(token);
     gsize len = html->len;
