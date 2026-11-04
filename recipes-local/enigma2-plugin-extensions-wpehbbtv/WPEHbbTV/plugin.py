@@ -1314,26 +1314,28 @@ class AutoStart:
 
 class RedButtonHook:
 	"""enigma2 calls InfoBar.onHBBTVActivation when the red button is pressed on a service that signals a HbbTV application (the hook the old
-	HbbTV plugins used). The InfoBar does not exist yet when the session starts: register as soon as it does."""
+	HbbTV plugins used). The InfoBar does not exist yet when the session starts: register as soon as it does - and keep checking, slowly: another
+	plugin or a GUI reload that replaces the InfoBar or its list of hooks would otherwise leave the red button dead until enigma2 is restarted."""
 
 	def __init__(self, session):
 		self.session = session
-		self.tries = 0
+		self.reported = False
 		self.timer = eTimer()
 		self.timer.callback.append(self.register)
 		self.timer.start(2000, False)
 
 	def register(self):
-		self.tries += 1
 		try:
 			from Screens.InfoBar import InfoBar
-			if InfoBar.instance is not None:
-				InfoBar.instance.onHBBTVActivation.append(self.activated)
-				self.timer.stop()
+			bar = InfoBar.instance
+			if bar is not None:
+				if self.activated not in bar.onHBBTVActivation:
+					bar.onHBBTVActivation.append(self.activated)
+				self.timer.start(10000, False)  # registered (or still so): from now on only a check now and then
 		except Exception as error:
-			print("[WPEHbbTV] red button hook: %s" % error)
-		if self.tries > 90:
-			self.timer.stop()
+			if not self.reported:  # not every 2 s
+				self.reported = True
+				print("[WPEHbbTV] red button hook: %s" % error)
 
 	def activated(self):
 		if readSettings()["WPE_REDBUTTON"] == "1":  # not reached while a running automatic application has taken the red key
@@ -1643,11 +1645,19 @@ def menuHook(menuid, **kwargs):
 	return []
 
 
+def redButtonApp(session, **kwargs):
+	"""The red button as an Extensions-menu entry: Button Setup can bind a key to it, which works whatever enigma2's own red-button action decides
+	(that one calls the plugin only when enigma2 itself knows a HbbTV URL for the service)."""
+	channelApp(session, redButton=True)
+
+
 def Plugins(**kwargs):
 	return [PluginDescriptor(name="WPE HbbTV Test", description="WPE WebKit HbbTV 2.0 experiment: test pages on top of enigma2",
 		where=PluginDescriptor.WHERE_EXTENSIONSMENU, fnc=main),
 		PluginDescriptor(name="WPE HbbTV: channel app", description="Run the HbbTV application of the current channel (ORB engine, mock platform)",
 		where=PluginDescriptor.WHERE_EXTENSIONSMENU, fnc=channelApp),
+		PluginDescriptor(name="WPE HbbTV: red button", description="Start the HbbTV application of the current channel as the red button does (for Button Setup)",
+		where=PluginDescriptor.WHERE_EXTENSIONSMENU, fnc=redButtonApp),
 		PluginDescriptor(name="WPE HbbTV", description="Red button, autostart, rendering, GPU memory, timing and stored data",
 		where=PluginDescriptor.WHERE_MENU, fnc=menuHook),
 		PluginDescriptor(where=PluginDescriptor.WHERE_SESSIONSTART, fnc=sessionStart)]

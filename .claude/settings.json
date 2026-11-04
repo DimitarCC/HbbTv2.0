@@ -104,7 +104,9 @@
       "Bash(grep -n \"ctl\\\\b\\\\|\\\\\"launch\\\\|channel\\\\|exec .*wpe_fb\\\\|\\\\$1\\\\|\\\\$@\\\\|WPE_URL\\\\|ait\" run_wpe.sh)",
       "Bash(sort -u -t: -k2)",
       "Bash(node -e 'const ua=\"Mozilla/5.0 \\(X11; Linux\\) HbbTV/1.6.1 \\(+DRM;x;y;1;1;\\) LGE; HbbTV-Box; LaTivu_2.1.0_2026\";console.log\\(/LGE;.*LaTivu_2.1.0_2026/.test\\(ua\\), /CPAS 2.0.1;Samsung;/.test\\(ua\\)\\)')",
-      "WebSearch"
+      "WebSearch",
+      "Bash(python -c \"import ast,sys;ast.parse\\(open\\('plugin.py'\\).read\\(\\)\\)\")",
+      "Bash(python -c \"import ast;ast.parse\\(open\\('plugin.py'\\).read\\(\\)\\)\")"
     ],
     "additionalDirectories": [
       "E:\\Enigma2Dev\\OpenViX\\hbbtv2.0\\HbbTv2.0",
