@@ -3097,7 +3097,14 @@ int main(int argc, char **argv)
         {
             /* HbbTV servers sniff the user agent for the "HbbTV/x.y.z (...)" token the engine provides */
             WebKitSettings *settings = webkit_web_view_get_settings(view);
-            char *ua = g_strdup_printf("%s %s", webkit_settings_get_user_agent(settings), orb_host_user_agent());
+            const char *ua_conf = g_getenv("WPE_UA"); /* the user agent setting: appended after the HbbTV token, or a whole user agent ("Mozilla/...") */
+            char *ua;
+            if (ua_conf && g_str_has_prefix(ua_conf, "Mozilla/"))
+                ua = g_strdup(ua_conf);
+            else if (ua_conf && *ua_conf)
+                ua = g_strdup_printf("%s %s %s", webkit_settings_get_user_agent(settings), orb_host_user_agent(), ua_conf);
+            else
+                ua = g_strdup_printf("%s %s", webkit_settings_get_user_agent(settings), orb_host_user_agent());
             webkit_settings_set_user_agent(settings, ua);
             fprintf(stderr, "orb: user agent: %s\n", ua);
             g_free(ua);

@@ -1379,6 +1379,8 @@ SETTING_GROUPS = [
 			"Where they live. Empty = /media/hdd/.wpe-data, or /tmp/wpe-data when there is less than 100 MB free there. An absolute path of letters, digits and _ . / -"),
 		("WPE_TOLERANT", "Tolerant mode", ON_OFF, "1",
 			"Ignore TLS certificate errors, show no WebKit error page for a failed load, and reload a crashed page instead of quitting."),
+		("WPE_UA", "User agent", None, "",
+			"Text added to the user agent after the HbbTV token, for a broadcaster that only serves listed TV models (Mediaset: LGE; HbbTV-Box; LaTivu_2.1.0_2026). Starting with Mozilla/ it replaces the whole user agent. Empty = unchanged."),
 		("WPE_DEBUG", "Debug log (slower)", ON_OFF, "0",
 			"The page's console, media events, every network request and GStreamer output go to /tmp/wpe_fb.log."),
 	]),
