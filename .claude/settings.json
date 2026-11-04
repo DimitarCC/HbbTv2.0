@@ -96,7 +96,14 @@
       "Bash(PYTHONIOENCODING=utf8 python dis.py \"C:/Users/dimit/Downloads/Telegram Desktop/libvc5dream.so.1.0.0\" 2bc0 2cc0)",
       "Bash(mv dis.py armdis.py)",
       "Bash(PYTHONIOENCODING=utf8 python armdis.py \"C:/Users/dimit/Downloads/Telegram Desktop/libvc5dream.so.1.0.0\" 2b80 2cc0)",
-      "Bash(python mk23.py)"
+      "Bash(python mk23.py)",
+      "Bash(cd /tmp)",
+      "Bash(curl -s -m 20 -i -A \"Mozilla/5.0 \\(Linux\\) AppleWebKit/605.1.15 \\(KHTML, like Gecko\\) HbbTV/1.5.1 \\(+DRM;Samsung;SmartTV2020;T-KTMDEUC-1090.1;;\\) OpenBrowser/3.0 CE-HTML/1.0\" \"https://www.raiplay.it/hbbtv/launcher/RemoteControl/index.html?delivery=0\")",
+      "Bash(curl -s -m 20 -I \"https://www.raiplay.it/hbbtv/launcher/RemoteControl/javascript/JS0_20261012_124339.js\")",
+      "Bash(curl -s -m 20 \"https://hbbtv.mediaset.net/app/enabler/backdoor.html\")",
+      "Bash(grep -n \"ctl\\\\b\\\\|\\\\\"launch\\\\|channel\\\\|exec .*wpe_fb\\\\|\\\\$1\\\\|\\\\$@\\\\|WPE_URL\\\\|ait\" run_wpe.sh)",
+      "Bash(sort -u -t: -k2)",
+      "Bash(node -e 'const ua=\"Mozilla/5.0 \\(X11; Linux\\) HbbTV/1.6.1 \\(+DRM;x;y;1;1;\\) LGE; HbbTV-Box; LaTivu_2.1.0_2026\";console.log\\(/LGE;.*LaTivu_2.1.0_2026/.test\\(ua\\), /CPAS 2.0.1;Samsung;/.test\\(ua\\)\\)')"
     ],
     "additionalDirectories": [
       "E:\\Enigma2Dev\\OpenViX\\hbbtv2.0\\HbbTv2.0",

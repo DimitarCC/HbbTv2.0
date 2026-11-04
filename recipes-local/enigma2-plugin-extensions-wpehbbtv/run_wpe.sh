@@ -23,6 +23,8 @@ ORB=${WPE_ORB_DIR:-/usr/lib/orb}
 #   WPE_PERSIST     1: HTTP cache (<= 75 MB), cookies and local storage survive between runs (default 1)
 #   WPE_PERSIST_DIR where they live (default /media/hdd/.wpe-data; on a box without a disk or USB stick - less than 100 MB free there - /tmp/wpe-data, lost at reboot)
 #   WPE_TOLERANT    1: ignore TLS certificate errors, no error page, reload a crashed page; default 1
+#   WPE_UA          user agent: text added after the HbbTV token (a server that whitelists devices, e.g. Mediaset, looks for a model in it), or, when it
+#                   starts with "Mozilla/", the whole user agent; default empty (unchanged)
 #   WPE_DEBUG       1: debug.js (the page's console and media events in /tmp/wpe_fb.log) and GStreamer debug output; default 0
 #   WPE_SKIA_CPU    1: paint on the CPU, 0: on the GPU; default 0
 #   WPE_COVER_AREA, WPE_SKIA_CACHE_MB, WPE_TEXTURE_POOL_MB  GPU memory (see below); defaults 2, 32, 16
@@ -32,11 +34,11 @@ CONF=/etc/enigma2/wpehbbtv.conf
 if [ -f "$CONF" ]; then
 	while IFS='=' read -r k v; do
 		case $k in
-		WPE_HIDPI | WPE_FAST_ANIM | WPE_PERSIST | WPE_PERSIST_DIR | WPE_DEBUG | WPE_LIMIT_REPEAT | WPE_EGL | WPE_EGL_SETTLE_MS | WPE_EGL_MAX_DELAY_MS | WPE_EGL_KEY_MS | WPE_EGL_HOLD_MS | WPE_EGL_HOLD_CLEAR | WPE_NO_NEXUS_JOIN | WPE_EGL_RESYNC_MS | WPE_EGL_NO_HOLE | WPE_EGL_DEBUG_RECTS | WPE_NICE | WPE_TOLERANT | WPE_EGL_PIG_SETTLE_MS | WPE_EGL_PIG_FIRST_MS | WPE_EGL_DIP_MS | WPE_HW_ACCEL | WPE_EGL_NO_TRIM | WPE_COVER_AREA | WPE_SKIA_CACHE_MB | WPE_TEXTURE_POOL_MB | WPE_SKIA_CPU | WPE_SKIA_DDL | WPE_SKIA_GPU_THREADS | WPE_TILE_SIZE | WEBKIT_DISABLE_GL_FENCE) eval "[ -n \"\${$k}\" ] || $k=\$v" ;;
+		WPE_HIDPI | WPE_FAST_ANIM | WPE_PERSIST | WPE_PERSIST_DIR | WPE_DEBUG | WPE_LIMIT_REPEAT | WPE_EGL | WPE_EGL_SETTLE_MS | WPE_EGL_MAX_DELAY_MS | WPE_EGL_KEY_MS | WPE_EGL_HOLD_MS | WPE_EGL_HOLD_CLEAR | WPE_NO_NEXUS_JOIN | WPE_EGL_RESYNC_MS | WPE_EGL_NO_HOLE | WPE_EGL_DEBUG_RECTS | WPE_NICE | WPE_TOLERANT | WPE_EGL_PIG_SETTLE_MS | WPE_EGL_PIG_FIRST_MS | WPE_EGL_DIP_MS | WPE_HW_ACCEL | WPE_EGL_NO_TRIM | WPE_COVER_AREA | WPE_SKIA_CACHE_MB | WPE_TEXTURE_POOL_MB | WPE_SKIA_CPU | WPE_SKIA_DDL | WPE_SKIA_GPU_THREADS | WPE_TILE_SIZE | WPE_UA | WEBKIT_DISABLE_GL_FENCE) eval "[ -n \"\${$k}\" ] || $k=\$v" ;;
 		esac
 	done <"$CONF"
 fi
-export WPE_HW_ACCEL WPE_EGL_NO_TRIM WPE_EGL_DIP_MS WPE_EGL_PIG_SETTLE_MS WPE_EGL_PIG_FIRST_MS WPE_EGL_DEBUG_RECTS WPE_EGL_NO_HOLE WPE_NO_NEXUS_JOIN WPE_EGL_RESYNC_MS WPE_EGL_SETTLE_MS WPE_EGL_MAX_DELAY_MS WPE_EGL_KEY_MS WPE_EGL_HOLD_MS WPE_EGL_HOLD_CLEAR # read by wpe_fb --egl-sink (empty = its defaults)
+export WPE_UA WPE_HW_ACCEL WPE_EGL_NO_TRIM WPE_EGL_DIP_MS WPE_EGL_PIG_SETTLE_MS WPE_EGL_PIG_FIRST_MS WPE_EGL_DEBUG_RECTS WPE_EGL_NO_HOLE WPE_NO_NEXUS_JOIN WPE_EGL_RESYNC_MS WPE_EGL_SETTLE_MS WPE_EGL_MAX_DELAY_MS WPE_EGL_KEY_MS WPE_EGL_HOLD_MS WPE_EGL_HOLD_CLEAR # read by wpe_fb --egl-sink (empty = its defaults)
 # defaults for what the conf file (or the environment) leaves unset
 : "${WPE_EGL_SETTLE_MS:=0}" "${WPE_EGL_MAX_DELAY_MS:=0}" "${WPE_EGL_HOLD_MS:=0}" "${WPE_EGL_HOLD_CLEAR:=0}" "${WPE_EGL_KEY_MS:=400}" "${WPE_EGL_NO_HOLE:=0}" "${WPE_NICE:=-20}"
 : "${WPE_EGL_PIG_FIRST_MS:=3000}" "${WPE_EGL_DIP_MS:=300}" "${WPE_SKIA_CPU:=0}"
