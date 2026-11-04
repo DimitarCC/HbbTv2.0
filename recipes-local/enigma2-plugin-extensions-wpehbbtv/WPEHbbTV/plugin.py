@@ -974,7 +974,7 @@ class ChannelAppLauncher:
 
 	def start(self):
 		self.ait = takePrefetched(self.session)  # read (and parsed) since the channel started, when that has been going on
-		if self.ait is not None and self.ait.failed and not self.redButton:  # the menu shows the list: a prefetch that found nothing is read again
+		if self.ait is not None and self.ait.failed:  # a prefetch that found nothing is read again (the red button only fires on a channel that signals an application, so the failure is transient; without the AIT the application starts as a plain URL and its dvb://current.ait links fail with "No AIT")
 			self.ait.stop()
 			self.ait = None
 		if self.ait is None:
