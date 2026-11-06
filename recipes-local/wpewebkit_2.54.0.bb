@@ -11,12 +11,27 @@ FILESEXTRAPATHS:prepend := "${THISDIR}/${PN}:"
 # WebDriver fails to build when both LOG_DISABLED and RELEASE_LOG_DISABLED are
 # set, which is the case for a release build without journald. Drop this patch
 # once https://github.com/WebKit/WebKit/pull/74228 lands.
-SRC_URI = "https://wpewebkit.org/releases/${BPN}-${PV}.tar.xz;name=tarball \
-           file://0001-bmalloc-libpas-avoid-C-stdatomic-in-C-build.patch \
-           file://0002-WebDriver-Fix-build-when-logging-is-disabled.patch \
-           "
+# The source is the unmodified wpewebkit-${PV}.tar.xz release (first commit, tagged wpewebkit-${PV}) with the OpenViX patches on top, one commit
+# each, on the branch openvix/2.54. Patch numbering below refers to the commit order. Updating to a new release: import the new tarball on a
+# new branch and rebase the patch commits onto it.
+# The first two commits are build fixes that are not upstream yet:
+# 310886@main added an unconditional <stdatomic.h> to libpas pas_utils.h. GCC
+# resolves it to its C stdatomic.h when pas_utils.h is pulled into a C++ unit,
+# which fails with "'_Atomic' does not name a type". Upstream fixed this for
+# xcodebuild only (312138@main), the CMake build has no fix yet. Drop the
+# commit once https://github.com/WebKit/WebKit/pull/74158 lands.
+#
+# WebDriver fails to build when both LOG_DISABLED and RELEASE_LOG_DISABLED are
+# set, which is the case for a release build without journald. Drop the commit
+# once https://github.com/WebKit/WebKit/pull/74228 lands.
+SRC_URI = "git://github.com/OpenViX/wpewebkit.git;protocol=https;branch=openvix/2.54"
+# Always the tip of the branch: only OpenViX pushes there. For a reproducible build, pin it instead: SRCREV = "<full commit hash>".
+SRCREV = "${AUTOREV}"
+PV = "2.54.0+git${SRCPV}"
+S = "${WORKDIR}/git"
 
-SRC_URI[tarball.sha256sum] = "efa9bcc3cb891c2d88f50eec710d9ccee71cbdf1040420361eb98c17355eb452"
+# The licence files are in the repo exactly as in the tarball; LICENSE and LIC_FILES_CHKSUM (Source/WebCore/LICENSE-LGPL-2.1, relative to S)
+# are set in wpewebkit.inc.
 
 # HbbTV 2.0 experiment: minimal WPE WebKit for a box with only the vendor
 # EGL/GLES2 (no DRM/GBM, no Wayland). Goal of step 1: render a page into a
@@ -42,45 +57,15 @@ EXTRA_OECMAKE:append = " -DUSE_LIBDRM=OFF"
 
 # The vendor EGL has no GL for gst-gl, and gst-plugins-bad (mpegts) is not needed
 # yet. Upstream still lists both as REQUIRED find_package() components with
-# video on, so the patch below only requires them when their option is ON
+# video on, so the GStreamerChecks commit (commit 3) only requires them when their option is ON
 # (avoids rebuilding the image's gst-plugins-base with GL just for a check).
+
 EXTRA_OECMAKE:append = " -DUSE_GSTREAMER_GL=OFF -DUSE_GSTREAMER_MPEGTS=OFF"
-SRC_URI += "file://0001-GStreamerChecks-only-require-gl-and-mpegts-when-enabled.patch"
 
-# With -DUSE_LIBDRM=OFF, getImageInfoFromBuffer() still used DRM_FORMAT_XRGB8888
+# Commit 4 (0002-AcceleratedBackingStore: guard DRM_FORMAT with USE(LIBDRM)): with -DUSE_LIBDRM=OFF, getImageInfoFromBuffer() still used DRM_FORMAT_XRGB8888
 # (its include and the later ARGB8888 use are guarded, this one was not).
-SRC_URI += "file://0002-AcceleratedBackingStore-guard-DRM_FORMAT-with-USE-LIBDRM.patch"
 
-# The remaining patches, only when building from the tarball (no EXTERNALSRC). In development mode (see the end of this file) the
-# patched tree already has them, and adding them to SRC_URI would change the task signatures: that re-runs do_configure, and
-# cmake.bbclass then DELETES the whole build directory (cleandirs = ${B}, which externalsrc only keeps when it lies inside the source
-# tree) = a clean ~2h rebuild. So: do not touch SRC_URI or anything else that reaches do_configure while a dev build is in progress.
-python () {
-    if d.getVar('EXTERNALSRC'):
-        return
-    d.appendVar('SRC_URI', ' \
-        file://0003-Enable-default-EGL-display-fallback-for-WPE.patch \
-        file://0004-WPE-handle-PlatformDisplay-Type-Default.patch \
-        file://0005-GLFence-add-WEBKIT_DISABLE_GL_FENCE-opt-out.patch \
-        file://0006-WPE-SHM-read-back-only-the-damaged-regions.patch \
-        file://0007-Treat-application-vnd.hbbtv.xhtml-xml-as-XHTML.patch \
-        file://0008-GStreamer-add-Dreambox-quirk-and-hole-punch-quirk.patch \
-        file://0009-GStreamer-Dreambox-decoder-position-and-seeking.patch \
-        file://0010-GStreamer-Dreambox-negotiate-the-decoder-with-the-embedder.patch \
-        file://0011-GStreamer-Dreambox-hole-punch-scale.patch \
-        file://0012-GStreamer-Dreambox-hole-punch-dry-run.patch \
-        file://0013-WPE-SHM-fast-read-back-through-an-ION-pixmap-surface-on-Dreambox.patch \
-        file://0014-WebKitWebSrc-a-416-at-the-end-of-the-file-is-end-of-stream.patch \
-        file://0015-WebKitWebSrc-do-not-EOS-a-spurious-EOF-probe-that-pre-empted-real-content.patch \
-        file://0016-GStreamer-bounded-buffering-for-large-progressive-downloads.patch \
-        file://0017-WPE-join-and-register-with-Nexus-before-any-EGL-call.patch \
-        file://0018-GLContext-fall-back-to-a-pbuffer-without-EGL_KHR_surfaceless_context.patch \
-        file://0019-PlatformDisplaySurfaceless-join-Nexus-before-the-first-EGL-call.patch \
-        file://0020-GPU-memory-limits-tunable-at-runtime-cover-area-Skia-cache-texture-pool.patch \
-        file://0021-Skia-GL-context-creation-failure-is-logged-and-no-longer-crashes-the-compositor.patch \
-        file://0022-Skia-resolve-glGetFloatv-through-epoxy-so-GrGLInterface-validate-passes-on-the-Broadcom-V3D-driver.patch \
-    ')
-}
+# Patches 0003-0022 (commits 5-24 on openvix/2.54):
 # 0003-0006: vendor EGL (Broadcom V3D) without GBM/Mesa surfaceless: the default EGL display and the WPE platform fixes it needs.
 # 0007: HbbTV - application/vnd.hbbtv.xhtml+xml is XHTML.
 # 0008-0012: <video> plays on the hardware video plane (hole punch quirk for dvbvideosink/dvbaudiosink), decoder position and seeking,
@@ -144,13 +129,16 @@ CXXFLAGS:append = " -DBROADCOM_PLATFORM"
 CFLAGS:append = " -DENABLE_C_LOOP=0"
 CXXFLAGS:append = " -DENABLE_C_LOOP=0"
 
-# The build is reproducible as it stands: the tarball plus the recipe's own two patches plus the twenty-two above, in this order.
+# The source is the tarball import plus the 24 patch commits (the four before 0003 and 0003-0022), in this order, up to the tip of the branch.
 #
-# Development mode (incremental rebuilds): OE wipes the build directory whenever SRC_URI changes, and every source fix would cost a
+# Development mode (incremental rebuilds): OE wipes the build directory whenever SRC_URI (or SRCREV) changes, and every source fix would cost a
 # clean ~2h rebuild. Instead, build from a persistent, already-patched tree with externalsrc, in local.conf like the other packages:
 #     EXTERNALSRC:pn-wpewebkit = "/home/alpha/wpe-src/wpewebkit-2.54.0"
 #     EXTERNALSRC_BUILD:pn-wpewebkit = "/home/alpha/wpe-src/build"
-# (the tree = tarball + the patches in this layer; tools/build/prep_src.sh makes it). The SRC_URI patches are ignored while it is set.
+# (the tree = a clone of the repo on branch openvix/2.54, or the tarball + the patches made by tools/build/prep_src.sh). SRC_URI and SRCREV
+# are ignored while it is set, but a change to either still changes the task signatures and re-runs do_configure, which
+# deletes the build directory (cmake.bbclass: cleandirs = ${B}). Do not touch them while a dev build is in progress. Commit fixes in the clone,
+# and push them (SRCREV follows the branch).
 
 # WebKit compile jobs are memory hungry (unified builds: several GB each).
 # -k 0: keep going after a failed compile so one run reports every error.
